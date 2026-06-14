@@ -4,6 +4,7 @@ Uses loguru with JSON output in production, human-readable in dev.
 """
 import logging
 import sys
+from types import FrameType
 
 from loguru import logger
 
@@ -19,9 +20,10 @@ class InterceptHandler(logging.Handler):
         except ValueError:
             level = record.levelno  # type: ignore[assignment]
 
-        frame, depth = logging.currentframe(), 2
-        while frame.f_code.co_filename == logging.__file__:
-            frame = frame.f_back  # type: ignore[assignment]
+        frame: FrameType | None = logging.currentframe()
+        depth = 2
+        while frame and frame.f_code.co_filename == logging.__file__:
+            frame = frame.f_back
             depth += 1
 
         logger.opt(depth=depth, exception=record.exc_info).log(

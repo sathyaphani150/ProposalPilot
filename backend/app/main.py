@@ -95,6 +95,13 @@ def _register_middleware(app: FastAPI) -> None:
             logger.debug(f"--> {request.method} {request.url.path}")
             response = await call_next(request)
             response.headers["X-Request-ID"] = request_id
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Referrer-Policy"] = "no-referrer"
+            response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+            if request.url.path.startswith("/api/"):
+                response.headers["Cache-Control"] = "no-store"
+                response.headers["Pragma"] = "no-cache"
             logger.debug(f"<-- {response.status_code}")
 
         return response

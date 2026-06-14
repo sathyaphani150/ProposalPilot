@@ -40,7 +40,65 @@ export interface RFPAnalysis {
   scope_boundaries: string[]
   domain_tags: string[]
   estimated_complexity: string | null
+  raw_llm_output?: {
+    extraction_meta?: {
+      mode?: string
+      confidence?: number
+      warnings?: string[]
+      source_chars_used?: number
+      source_line_count?: number
+      candidate_unit_count?: number
+    }
+    executive_intelligence?: ExecutiveIntelligence
+    executive_report?: ExecutiveReport
+    [key: string]: unknown
+  }
   created_at: string
+}
+
+export interface ExecutiveInsight {
+  title: string
+  insight: string
+  evidence: string
+  source: 'explicit_in_rfp' | 'inferred_from_rfp' | 'derived_from_industry_knowledge' | string
+  confidence: number
+  recommendation: string
+}
+
+export interface ExecutiveIntelligence {
+  executive_summary: string
+  key_insights: ExecutiveInsight[]
+  opportunity_assessment: ExecutiveInsight[]
+  business_drivers: string[]
+  risks_and_dependencies: string[]
+  recommendations: string[]
+  evidence_mode?: string
+}
+
+export interface ExecutiveReport {
+  ceo_brief: string
+  bid_recommendation: {
+    decision: string
+    overall_score: number
+    rationale: string
+    score_breakdown?: Record<string, number>
+    [key: string]: unknown
+  }
+  business_problem: Record<string, unknown>
+  solution_scope: Array<Record<string, unknown>>
+  excluded_noise: Array<Record<string, unknown>>
+  missing_information: Array<{ category: string; questions: string[] }>
+  risk_assessment: Array<Record<string, unknown>>
+  delivery_complexity: Record<string, unknown>
+  architecture_recommendation: Record<string, unknown>
+  commercial_intelligence: Record<string, unknown>
+  competitor_intelligence: Array<Record<string, unknown>>
+  win_strategy: string[]
+  prospect_call_prep: Record<string, unknown>
+  past_expertise_match: Record<string, unknown>
+  proposal_outline: string[]
+  quality_checks: Record<string, unknown>
+  document_section_summary?: Record<string, number>
 }
 
 // ── Knowledge Base Types ─────────────────────────────────────────────────
@@ -73,6 +131,8 @@ export interface KnowledgeSearchResult {
   title?: string
   domain?: string
   item_type?: string
+  tech_stack?: string[]
+  tags?: string[]
 }
 
 // ── War Room Types ────────────────────────────────────────────────────────
@@ -107,6 +167,7 @@ export interface WarRoomSession {
   call_notes: string | null
   human_overrides: Record<string, unknown>
   agent_outputs: Record<AgentName, string | null>
+  matched_projects: SimilarProject[]
   created_at: string
   updated_at: string
 }
@@ -116,29 +177,49 @@ export type ProposalType = 'prep_pack' | 'final_proposal'
 
 export interface PrepPackContent {
   rfp_summary: string
+  client_situation_assessment?: string
+  value_propositions?: string[]
+  assumptions_to_validate?: string[]
+  competitive_considerations?: string[]
   similar_projects: SimilarProject[]
   past_expertise_story: string
   prospect_call_narrative: string
   discovery_questions: DiscoveryQuestions
+  talking_points: string[]
   risks_and_assumptions: string[]
   scope_guardrails: string[]
   proposed_architecture_direction: string
+  solution_narrative?: string
+  quality_note?: {
+    generation_mode: string
+    retrieval_warning?: string | null
+    source: string
+  }
 }
 
 export interface SimilarProject {
+  doc_id?: string
   title: string
   match_type: 'exact' | 'partial' | 'adjacent' | 'none'
   confidence_score: number
   relevance_summary: string
   reusable_assets: string[]
+  evidence?: {
+    chunk_index: number
+    snippet: string
+  }
 }
 
 export interface DiscoveryQuestions {
-  business: string[]
-  data: string[]
-  integration: string[]
-  architecture: string[]
-  implementation_readiness: string[]
+  [category: string]: string[] | undefined
+  business?: string[]
+  data?: string[]
+  integration?: string[]
+  architecture?: string[]
+  implementation_readiness?: string[]
+  operations?: string[]
+  governance?: string[]
+  commercial?: string[]
 }
 
 export interface FinalProposalContent {

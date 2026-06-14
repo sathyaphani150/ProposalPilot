@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import json
 import re
+import hashlib
+import math
+from importlib import import_module
 from typing import Any, Type, TypeVar
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings, ChatOpenAI, OpenAIEmbeddings
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 from app.config import get_settings
 from app.exceptions import LLMServiceError
@@ -16,6 +19,62 @@ from app.exceptions import LLMServiceError
 settings = get_settings()
 
 T = TypeVar("T", bound=BaseModel)
+
+
+def _is_non_retryable_llm_error(error: Exception) -> bool:
+    """Return True for auth/config errors where retries only flood logs."""
+    message = str(error).lower()
+    non_retryable_markers = (
+        "401",
+        "unauthorized",
+        "invalid api key",
+        "invalid_api_key",
+        "api key is not configured",
+        "authentication",
+    )
+    return any(marker in message for marker in non_retryable_markers)
+
+
+class DeterministicHashEmbeddings:
+    """
+    Local fallback embeddings for Groq-only setups.
+
+    Groq currently provides chat models, not an embedding API. This lightweight
+    hashed bag-of-words embedder keeps retrieval deterministic and non-random
+    when OpenAI/Azure/Ollama embeddings are not configured.
+    """
+
+    def __init__(self, dimensions: int) -> None:
+        self.dimensions = dimensions
+
+    def _embed(self, text: str) -> list[float]:
+        vector = [0.0] * self.dimensions
+        tokens = re.findall(r"[a-zA-Z0-9][a-zA-Z0-9_.+#/-]{1,}", text.lower())
+        if not tokens:
+            return vector
+
+        for token in tokens:
+            digest = hashlib.sha256(token.encode("utf-8")).digest()
+            idx = int.from_bytes(digest[:4], "big") % self.dimensions
+            sign = 1.0 if digest[4] % 2 == 0 else -1.0
+            vector[idx] += sign
+
+        norm = math.sqrt(sum(value * value for value in vector))
+        if norm == 0:
+            return vector
+        return [value / norm for value in vector]
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [self._embed(text) for text in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed(text)
+
+    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self.embed_documents(texts)
+
+    async def aembed_query(self, text: str) -> list[float]:
+        return self.embed_query(text)
 
 
 class LLMService:
@@ -30,7 +89,8 @@ class LLMService:
 
     def __init__(self) -> None:
         self._chat_model: BaseChatModel | None = None
-        self._embeddings = None
+        self._embeddings: Any | None = None
+        self._chat_disabled_reason: str | None = None
 
     # ── Chat Model ─────────────────────────────────────────────────────
     def get_chat_model(
@@ -38,7 +98,6 @@ class LLMService:
         *,
         temperature: float = 0.2,
         streaming: bool = False,
-        max_tokens: int = 4096,
     ) -> BaseChatModel:
         """Returns the configured chat model. Always use this — never instantiate directly."""
         provider = settings.LLM_PROVIDER.lower()
@@ -46,60 +105,62 @@ class LLMService:
         if provider == "azure":
             if not settings.AZURE_OPENAI_API_KEY or not settings.AZURE_OPENAI_ENDPOINT:
                 raise LLMServiceError("Azure OpenAI credentials are not configured.")
-            return AzureChatOpenAI(
+            return AzureChatOpenAI(  # type: ignore[call-arg,arg-type]
                 azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
                 azure_deployment=settings.AZURE_OPENAI_DEPLOYMENT_NAME,
                 api_version=settings.AZURE_OPENAI_API_VERSION,
-                api_key=settings.AZURE_OPENAI_API_KEY,
+                api_key=SecretStr(settings.AZURE_OPENAI_API_KEY),
                 temperature=temperature,
                 streaming=streaming,
-                max_tokens=max_tokens,
-                request_timeout=120,
+                timeout=120,
                 max_retries=3,
             )
 
         if provider == "openai":
             if not settings.OPENAI_API_KEY:
                 raise LLMServiceError("OpenAI API key is not configured.")
-            return ChatOpenAI(
+            return ChatOpenAI(  # type: ignore[call-arg,arg-type]
                 model=settings.LLM_MODEL,
-                api_key=settings.OPENAI_API_KEY,
+                api_key=SecretStr(settings.OPENAI_API_KEY),
                 temperature=temperature,
                 streaming=streaming,
-                max_tokens=max_tokens,
-                request_timeout=120,
+                timeout=120,
                 max_retries=3,
             )
 
         if provider == "google":
             try:
-                from langchain_google_genai import ChatGoogleGenerativeAI
-            except ImportError:
+                google_module = import_module("langchain_google_genai")
+                chat_google = getattr(google_module, "ChatGoogleGenerativeAI")
+            except (ImportError, AttributeError) as exc:
                 raise LLMServiceError(
                     "langchain-google-genai is not installed. Run: pip install langchain-google-genai"
-                )
+                ) from exc
             if not settings.GOOGLE_API_KEY:
                 raise LLMServiceError("Google API key is not configured.")
-            return ChatGoogleGenerativeAI(
+            return chat_google(
                 model="gemini-1.5-pro",
-                google_api_key=settings.GOOGLE_API_KEY,
+                google_api_key=SecretStr(settings.GOOGLE_API_KEY),
                 temperature=temperature,
                 streaming=streaming,
-                max_output_tokens=max_tokens,
             )
 
         if provider == "groq":
+            try:
+                from langchain_groq import ChatGroq
+            except ImportError as exc:
+                raise LLMServiceError(
+                    "langchain-groq is not installed. Run: pip install langchain-groq"
+                ) from exc
             if not settings.GROQ_API_KEY:
                 raise LLMServiceError("Groq API key is not configured.")
-            return ChatOpenAI(
-                base_url="https://api.groq.com/openai/v1",
+            return ChatGroq(  # type: ignore[call-arg,arg-type]
                 model=settings.LLM_MODEL,
-                api_key=settings.GROQ_API_KEY,
+                api_key=SecretStr(settings.GROQ_API_KEY),
                 temperature=temperature,
                 streaming=streaming,
-                max_tokens=max_tokens,
-                request_timeout=120,
-                max_retries=3,
+                timeout=120,
+                max_retries=0,
             )
 
         if provider == "ollama":
@@ -109,14 +170,13 @@ class LLMService:
             elif not base_url.endswith("/v1"):
                 base_url = base_url.rstrip("/") + "/v1"
 
-            return ChatOpenAI(
+            return ChatOpenAI(  # type: ignore[call-arg,arg-type]
                 base_url=base_url,
                 model=settings.LLM_MODEL,
-                api_key="ollama",
+                api_key=SecretStr("ollama"),
                 temperature=temperature,
                 streaming=streaming,
-                max_tokens=max_tokens,
-                request_timeout=120,
+                timeout=120,
                 max_retries=3,
             )
 
@@ -135,7 +195,7 @@ class LLMService:
         if provider == "azure":
             self._embeddings = AzureOpenAIEmbeddings(
                 azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-                api_key=settings.AZURE_OPENAI_API_KEY,
+                api_key=SecretStr(settings.AZURE_OPENAI_API_KEY),
                 api_version=settings.AZURE_OPENAI_API_VERSION,
                 model=settings.EMBEDDING_MODEL,
             )
@@ -147,34 +207,15 @@ class LLMService:
                 model=settings.EMBEDDING_MODEL or "nomic-embed-text",
             )
         elif provider == "groq" and not settings.OPENAI_API_KEY:
-            # Fallback for offline/development if no OpenAI key for embeddings is provided
-            try:
-                from langchain_community.embeddings import HuggingFaceEmbeddings
-                self._embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-            except Exception:
-                logger.warning(
-                    f"No OpenAI key or HuggingFace libraries found for embeddings. "
-                    f"Falling back to mock embeddings of dimension {settings.EMBEDDING_DIMENSIONS}."
-                )
-
-                class MockEmbeddings:
-                    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
-                        return [[0.0] * settings.EMBEDDING_DIMENSIONS for _ in texts]
-
-                    async def aembed_query(self, text: str) -> list[float]:
-                        return [0.0] * settings.EMBEDDING_DIMENSIONS
-
-                    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-                        return [[0.0] * settings.EMBEDDING_DIMENSIONS for _ in texts]
-
-                    def embed_query(self, text: str) -> list[float]:
-                        return [0.0] * settings.EMBEDDING_DIMENSIONS
-
-                self._embeddings = MockEmbeddings()
+            logger.warning(
+                "Groq does not provide embeddings and OPENAI_API_KEY is not set. "
+                "Using deterministic local hash embeddings for retrieval."
+            )
+            self._embeddings = DeterministicHashEmbeddings(settings.EMBEDDING_DIMENSIONS)
         else:
             self._embeddings = OpenAIEmbeddings(
                 model=settings.EMBEDDING_MODEL,
-                api_key=settings.OPENAI_API_KEY,
+                api_key=SecretStr(settings.OPENAI_API_KEY),
                 dimensions=settings.EMBEDDING_DIMENSIONS,
             )
 
@@ -193,6 +234,9 @@ class LLMService:
         Extracts structured data from text using JSON-mode / with_structured_output.
         Retries up to 2 times on parse failure.
         """
+        if self._chat_disabled_reason:
+            raise LLMServiceError(self._chat_disabled_reason)
+
         model = self.get_chat_model(temperature=temperature)
 
         # Standard with_structured_output path
@@ -210,6 +254,7 @@ class LLMService:
             HumanMessage(content=user_content),
         ]
 
+        last_error: Exception | None = None
         for attempt in range(3):
             try:
                 result = await structured_model.ainvoke(messages)
@@ -219,6 +264,18 @@ class LLMService:
                 elif isinstance(result, dict):
                     return output_schema.model_validate(result)
             except Exception as e:
+                last_error = e
+                if _is_non_retryable_llm_error(e):
+                    self._chat_disabled_reason = (
+                        "LLM provider authentication/configuration failed. "
+                        "Fix the API key and restart the backend/Celery worker."
+                    )
+                    logger.warning(
+                        "Structured extraction skipped retries because the LLM provider "
+                        "returned an auth/config error. Check the configured API key."
+                    )
+                    raise LLMServiceError(self._chat_disabled_reason)
+
                 logger.warning(
                     f"Standard structured extraction attempt {attempt + 1} failed: {e}. "
                     f"Trying regex fallback."
@@ -230,13 +287,24 @@ class LLMService:
                     parsed_dict = self._safe_extract_json(content)
                     return output_schema.model_validate(parsed_dict)
                 except Exception as fallback_error:
+                    if _is_non_retryable_llm_error(fallback_error):
+                        self._chat_disabled_reason = (
+                            "LLM provider authentication/configuration failed. "
+                            "Fix the API key and restart the backend/Celery worker."
+                        )
+                        logger.warning(
+                            "Regex fallback skipped retries because the LLM provider "
+                            "returned an auth/config error. Check the configured API key."
+                        )
+                        raise LLMServiceError(self._chat_disabled_reason)
+
                     logger.error(f"Fallback extraction failed: {fallback_error}")
                     if attempt == 2:
                         raise LLMServiceError(
                             f"Structured extraction failed after 3 attempts: {str(e)} -> {str(fallback_error)}"
                         )
 
-        raise LLMServiceError("Structured extraction failed unexpectedly.")
+        raise LLMServiceError(f"Structured extraction failed unexpectedly: {last_error}")
 
     # ── Simple Completion ─────────────────────────────────────────────
     async def complete(
@@ -245,10 +313,9 @@ class LLMService:
         user_content: str,
         *,
         temperature: float = 0.3,
-        max_tokens: int = 4096,
     ) -> str:
         """Single-turn completion returning plain text."""
-        model = self.get_chat_model(temperature=temperature, max_tokens=max_tokens)
+        model = self.get_chat_model(temperature=temperature)
         messages: list[BaseMessage] = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_content),

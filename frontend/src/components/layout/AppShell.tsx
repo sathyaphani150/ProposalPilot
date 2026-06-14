@@ -40,7 +40,12 @@ function Sidebar() {
         <div className="sidebar-logo-icon">
           <Zap size={18} color="white" />
         </div>
-        <span className="sidebar-logo-text">ProposalPilot</span>
+        <div>
+          <span className="sidebar-logo-text">ProposalPilot</span>
+          <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+            RFP Intelligence
+          </div>
+        </div>
       </div>
 
       {/* Navigation */}
@@ -56,9 +61,9 @@ function Sidebar() {
             style={({ isActive }) =>
               item.accent && !isActive
                 ? {
-                    background: 'rgba(124, 58, 237, 0.15)',
-                    color: '#8b5cf6',
-                    border: '1px solid rgba(124, 58, 237, 0.25)',
+                    background: 'rgba(37, 99, 235, 0.16)',
+                    color: '#93c5fd',
+                    border: '1px solid rgba(96, 165, 250, 0.28)',
                   }
                 : {}
             }
@@ -88,7 +93,7 @@ function Sidebar() {
           style={{ color: 'var(--color-text-muted)', fontSize: '0.8125rem', cursor: 'default' }}
         >
           <FileText size={16} />
-          RFP Analysis
+          Analyze RFP
         </div>
         <div
           className="nav-item"
@@ -116,9 +121,9 @@ function Sidebar() {
         }}
       >
         <div style={{ fontWeight: 600, color: 'var(--color-text-secondary)' }}>
-          ProposalPilot AI
+          Demo mode
         </div>
-        <div>Internal RFP Intelligence Platform</div>
+        <div>Grounded outputs only</div>
       </div>
     </aside>
   )
@@ -148,7 +153,7 @@ function Topbar() {
           <div className="flex items-center gap-2">
             <span className="pulse" />
             <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-              System Online
+              Grounded workflow ready
             </span>
           </div>
         </div>

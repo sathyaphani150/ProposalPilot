@@ -40,18 +40,18 @@
 ## Phase 2: RFP Engine + Knowledge Base (Days 3–4)
 
 ### Day 3 — RFP Analysis Engine
-- [ ] Backend: RFP Understanding Engine (structured LLM extraction)
-- [ ] Backend: Celery task for async analysis
-- [ ] Backend: `POST /api/v1/rfp/{id}/analyze` endpoint
-- [ ] Backend: `GET /api/v1/rfp/{id}/analysis` endpoint
-- [ ] Frontend: RFP Analysis page (status polling + sections display)
+- [x] Backend: RFP Understanding Engine (structured LLM extraction)
+- [x] Backend: Celery task for async analysis
+- [x] Backend: `POST /api/v1/rfp/{id}/analyze` endpoint
+- [x] Backend: `GET /api/v1/rfp/{id}/analysis` endpoint
+- [x] Frontend: RFP Analysis page (status polling + sections display)
 
 ### Day 4 — Knowledge Base + RAG Pipeline
-- [ ] Backend: KB ingestion pipeline (parse → chunk → embed → Qdrant)
-- [ ] Backend: Hybrid search (dense + BM25 + RRF reranking)
-- [ ] Backend: `/api/v1/knowledge/*` endpoints
-- [ ] Backend: Synthetic seed data script (5 past projects)
-- [ ] Frontend: Knowledge Base page (upload + browse + search)
+- [x] Backend: KB ingestion pipeline (parse → chunk → embed → Qdrant)
+- [x] Backend: Hybrid search (dense + BM25 + RRF reranking)
+- [x] Backend: `/api/v1/knowledge/*` endpoints
+- [x] Backend: Synthetic seed data script (5 past projects)
+- [x] Frontend: Knowledge Base page (upload + browse + search)
 
 ## Phase 3: Expertise Matcher + Prep Pack (Days 5–6)
 

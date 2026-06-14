@@ -2,7 +2,7 @@
  * ProposalPilot AI — RFP API Functions
  */
 import { apiClient } from './client'
-import type { RFPSession, RFPAnalysis } from '@/types'
+import type { KnowledgeItem, KnowledgeSearchResult, RFPSession, RFPAnalysis } from '@/types'
 
 export const rfpApi = {
   upload: async (
@@ -53,23 +53,43 @@ export const rfpApi = {
 }
 
 export const knowledgeApi = {
-  ingest: async (file: File, metadata: Record<string, unknown>) => {
+  ingest: async (
+    file: File | null,
+    fields: {
+      item_type: string
+      title: string
+      description?: string
+      domain?: string
+      tech_stack?: string[]
+      tags?: string[]
+      extra_metadata?: Record<string, unknown>
+    }
+  ) => {
     const formData = new FormData()
-    formData.append('file', file)
-    formData.append('metadata', JSON.stringify(metadata))
+    if (file) formData.append('file', file)
+    formData.append('item_type', fields.item_type)
+    formData.append('title', fields.title)
+    if (fields.description) formData.append('description', fields.description)
+    if (fields.domain) formData.append('domain', fields.domain)
+    if (fields.tech_stack) formData.append('tech_stack', JSON.stringify(fields.tech_stack))
+    if (fields.tags) formData.append('tags', JSON.stringify(fields.tags))
+    if (fields.extra_metadata) {
+      formData.append('extra_metadata', JSON.stringify(fields.extra_metadata))
+    }
+
     const { data } = await apiClient.post('/knowledge/ingest', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
     return data
   },
 
-  list: async () => {
-    const { data } = await apiClient.get('/knowledge/items')
+  list: async (): Promise<{ items: KnowledgeItem[]; total: number }> => {
+    const { data } = await apiClient.get<{ items: KnowledgeItem[]; total: number }>('/knowledge/items')
     return data
   },
 
-  search: async (query: string, filters?: Record<string, string>) => {
-    const { data } = await apiClient.get('/knowledge/search', {
+  search: async (query: string, filters?: Record<string, string>): Promise<KnowledgeSearchResult[]> => {
+    const { data } = await apiClient.get<KnowledgeSearchResult[]>('/knowledge/search', {
       params: { q: query, ...filters },
     })
     return data
@@ -107,6 +127,11 @@ export const proposalApi = {
 
   getById: async (proposalId: string) => {
     const { data } = await apiClient.get(`/proposals/${proposalId}`)
+    return data
+  },
+
+  getLatestPrepPack: async (sessionId: string) => {
+    const { data } = await apiClient.get(`/proposals/session/${sessionId}/prep-pack`)
     return data
   },
 

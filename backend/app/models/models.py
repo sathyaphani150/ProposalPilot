@@ -105,6 +105,27 @@ class RFPAnalysis(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # ── Relationships ─────────────────────────────────────────────────────
     session: Mapped["RFPSession"] = relationship(back_populates="analysis")
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize analysis for API responses without exposing ORM internals."""
+        return {
+            "id": str(self.id),
+            "session_id": str(self.session_id),
+            "business_problem": self.business_problem,
+            "functional_requirements": self.functional_requirements or [],
+            "non_functional_requirements": self.non_functional_requirements or [],
+            "data_needs": self.data_needs or [],
+            "integration_needs": self.integration_needs or [],
+            "compliance_needs": self.compliance_needs or [],
+            "timeline_risks": self.timeline_risks or [],
+            "missing_information": self.missing_information or [],
+            "scope_boundaries": self.scope_boundaries or [],
+            "domain_tags": self.domain_tags or [],
+            "estimated_complexity": self.estimated_complexity,
+            "raw_llm_output": self.raw_llm_output or {},
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
 
 # ── Knowledge Base Item ───────────────────────────────────────────────────
 class KnowledgeItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):

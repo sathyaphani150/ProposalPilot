@@ -115,6 +115,8 @@ async def get_analysis(db: AsyncSession, session_id: uuid.UUID) -> dict:
     result = await db.execute(
         select(RFPAnalysis)
         .where(RFPAnalysis.session_id == session_id)
+        .order_by(RFPAnalysis.created_at.desc())
+        .limit(1)
     )
     analysis = result.scalar_one_or_none()
     if not analysis:

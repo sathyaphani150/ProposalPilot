@@ -5,8 +5,8 @@ Normalises whitespace and returns structured text suitable for LLM processing.
 """
 from __future__ import annotations
 
-import io
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 
@@ -83,13 +83,14 @@ def _parse_pdf(path: Path) -> str:
             "PyMuPDF is not installed. Run: pip install pymupdf"
         )
 
-    doc = fitz.open(str(path))
+    doc: Any = fitz.open(str(path))
     pages: list[str] = []
 
-    for page_num, page in enumerate(doc, start=1):
+    for page_index in range(int(doc.page_count)):
+        page = doc.load_page(page_index)
         page_text = page.get_text("text")  # type: ignore[attr-defined]
         if page_text.strip():
-            pages.append(f"--- Page {page_num} ---\n{page_text}")
+            pages.append(f"--- Page {page_index + 1} ---\n{page_text}")
 
     doc.close()
     return "\n\n".join(pages)

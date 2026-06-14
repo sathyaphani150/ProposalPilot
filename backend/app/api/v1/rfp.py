@@ -2,21 +2,16 @@
 ProposalPilot AI — RFP Router
 Handles RFP file upload, analysis triggers, and session management.
 """
-import os
 import uuid
-from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, UploadFile, status, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.exceptions import NotFoundError, RFPSessionNotFoundError
-from app.models import RFPSession
-from app.schemas.rfp import RFPSessionCreate, RFPSessionResponse, RFPSessionListResponse
+from app.schemas.rfp import RFPSessionResponse, RFPSessionListResponse
 from app.services.document_parser import validate_upload_file
 from app.services import rfp_service
 from app.config import get_settings
-import aiofiles
 
 settings = get_settings()
 router = APIRouter()
@@ -115,10 +110,12 @@ async def get_rfp_analysis(
 @router.delete(
     "/rfp/{session_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
     summary="Delete an RFP session",
 )
 async def delete_rfp_session(
     session_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-) -> None:
+) -> Response:
     await rfp_service.delete_session(db, session_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

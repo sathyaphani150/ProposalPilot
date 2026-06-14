@@ -33,13 +33,18 @@ COLLECTIONS = {
 }
 
 
+def _use_qdrant_https() -> bool:
+    local_hosts = {"localhost", "127.0.0.1", "0.0.0.0", "qdrant"}
+    return bool(settings.QDRANT_API_KEY and settings.QDRANT_HOST.lower() not in local_hosts)
+
+
 def get_qdrant_client() -> AsyncQdrantClient:
     """Returns a configured async Qdrant client. Call once per request."""
     return AsyncQdrantClient(
         host=settings.QDRANT_HOST,
         port=settings.QDRANT_PORT,
         api_key=settings.QDRANT_API_KEY or None,
-        https=False,
+        https=_use_qdrant_https(),
         timeout=30,
     )
 
@@ -189,7 +194,7 @@ async def hybrid_search(
 
     qdrant_filter: models.Filter | None = None
     if filters:
-        must_conditions = [
+        must_conditions: list[Any] = [
             models.FieldCondition(
                 key=key,
                 match=models.MatchValue(value=value),
@@ -226,17 +231,20 @@ async def hybrid_search(
             with_payload=True,
         )
 
-        return [
-            {
-                "point_id": str(r.id),
-                "score": r.score,
-                "text": r.payload.get("text", ""),
-                "doc_id": r.payload.get("doc_id", ""),
-                "chunk_index": r.payload.get("chunk_index", 0),
-                **{k: v for k, v in (r.payload or {}).items() if k not in ("text", "chunk_index")},
-            }
-            for r in results.points
-        ]
+        output: list[dict[str, Any]] = []
+        for r in results.points:
+            payload = r.payload if isinstance(r.payload, dict) else {}
+            output.append(
+                {
+                    "point_id": str(r.id),
+                    "score": r.score,
+                    "text": payload.get("text", ""),
+                    "doc_id": payload.get("doc_id", ""),
+                    "chunk_index": payload.get("chunk_index", 0),
+                    **{k: v for k, v in payload.items() if k not in ("text", "chunk_index")},
+                }
+            )
+        return output
 
     except Exception as e:
         logger.error(f"Hybrid search failed on '{collection_name}': {e}")

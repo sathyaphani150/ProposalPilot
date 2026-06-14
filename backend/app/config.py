@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     AZURE_OPENAI_DEPLOYMENT_NAME: str = "gpt-4o"
     AZURE_OPENAI_API_VERSION: str = "2024-02-01"
     GOOGLE_API_KEY: str = ""
-    GROQ_API_KEY: str = "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"
+    GROQ_API_KEY: str = ""
     OLLAMA_URL: str = "http://localhost:11434/api/generate"
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     EMBEDDING_DIMENSIONS: int = 1536

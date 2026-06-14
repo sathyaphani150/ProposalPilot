@@ -6,7 +6,7 @@ Internal RFP Intelligence Platform powered by Multi-Agent AI.
 
 ### Prerequisites
 - Docker Desktop (for PostgreSQL, Redis, Qdrant)
-- Python 3.11+
+- Python 3.11 or 3.12 recommended for backend dependency compatibility
 - Node.js 18+
 
 ### 1. Start Infrastructure
@@ -29,7 +29,7 @@ docker compose ps
 cd backend
 
 # Create and activate virtual environment
-python -m venv venv
+py -3.11 -m venv venv
 .\venv\Scripts\Activate.ps1
 
 # Install dependencies

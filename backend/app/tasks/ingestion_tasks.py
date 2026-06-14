@@ -22,13 +22,13 @@ def analyze_rfp_task(self, session_id: str) -> dict:
     logger.info(f"[Task {self.request.id}] Starting RFP analysis for session {session_id}")
 
     async def _run():
-        from sqlalchemy.ext.asyncio import AsyncSession
-        from app.database import AsyncSessionLocal
+        from app.database import AsyncSessionLocal, engine
         from app.models import RFPSession, RFPAnalysis
         from app.services.rfp_engine import analyze_rfp_document
         from sqlalchemy import select
 
         async with AsyncSessionLocal() as db:
+            session: RFPSession | None = None
             try:
                 # Fetch session
                 result = await db.execute(
@@ -50,6 +50,13 @@ def analyze_rfp_task(self, session_id: str) -> dict:
 
                 analysis_data = await analyze_rfp_document(session.raw_text)
 
+                existing_result = await db.execute(
+                    select(RFPAnalysis).where(RFPAnalysis.session_id == session.id)
+                )
+                for existing in existing_result.scalars().all():
+                    await db.delete(existing)
+                await db.flush()
+
                 # Save analysis
                 analysis = RFPAnalysis(
                     session_id=session.id,
@@ -65,12 +72,15 @@ def analyze_rfp_task(self, session_id: str) -> dict:
 
             except Exception as e:
                 logger.error(f"[Task] RFP analysis FAILED for session {session_id}: {e}")
-                try:
-                    session.status = "analysis_failed"
-                    await db.commit()
-                except Exception:
-                    pass
+                if session is not None:
+                    try:
+                        session.status = "analysis_failed"
+                        await db.commit()
+                    except Exception:
+                        pass
                 raise
+            finally:
+                await engine.dispose()
 
     try:
         return asyncio.run(_run())
@@ -92,24 +102,30 @@ def ingest_knowledge_item_task(self, knowledge_item_id: str) -> dict:
     logger.info(f"[Task] Ingesting knowledge item {knowledge_item_id}")
 
     async def _run():
-        from app.database import AsyncSessionLocal
+        from app.database import AsyncSessionLocal, engine
         from app.models import KnowledgeItem
         from app.services.knowledge_service import process_knowledge_item
         from sqlalchemy import select
 
         async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                select(KnowledgeItem).where(KnowledgeItem.id == knowledge_item_id)
-            )
-            item = result.scalar_one_or_none()
-            if not item:
-                return {"status": "error", "reason": "item_not_found"}
+            try:
+                result = await db.execute(
+                    select(KnowledgeItem).where(KnowledgeItem.id == knowledge_item_id)
+                )
+                item = result.scalar_one_or_none()
+                if not item:
+                    return {"status": "error", "reason": "item_not_found"}
 
-            point_ids, chunk_count = await process_knowledge_item(item)
-            item.qdrant_point_ids = point_ids
-            item.chunk_count = chunk_count
-            await db.commit()
-            return {"status": "success", "chunks": chunk_count}
+                point_ids, chunk_count = await process_knowledge_item(item)
+                item.qdrant_point_ids = point_ids
+                item.chunk_count = chunk_count
+                await db.commit()
+                return {"status": "success", "chunks": chunk_count}
+            except Exception as e:
+                logger.error(f"[Task] Knowledge base ingestion FAILED: {e}")
+                raise
+            finally:
+                await engine.dispose()
 
     try:
         return asyncio.run(_run())
