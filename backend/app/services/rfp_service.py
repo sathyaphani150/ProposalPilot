@@ -18,8 +18,55 @@ from app.config import get_settings
 from app.exceptions import RFPSessionNotFoundError
 from app.models import RFPSession, RFPAnalysis
 from app.services.document_parser import parse_document
+from app.services.rfp_engine import analyze_rfp_document
 
 settings = get_settings()
+
+
+_GENERIC_REGRESSION_TAGS = {
+    "mobile",
+    "web_portal",
+    "integration",
+    "data",
+    "reporting",
+    "workflow",
+}
+
+
+def _analysis_needs_recovery(
+    raw_llm_output: dict[str, object] | None,
+    missing_information: list[object] | None,
+    domain_tags: list[str] | None,
+    raw_text: str | None,
+) -> bool:
+    raw = raw_llm_output or {}
+    tags = set(domain_tags or [])
+    if not raw.get("executive_report"):
+        return True
+    if raw_text and len(raw_text) >= 1_000 and not missing_information:
+        return True
+    if tags and tags <= _GENERIC_REGRESSION_TAGS and not missing_information:
+        return True
+    return False
+
+
+async def _recover_analysis_if_needed(db: AsyncSession, analysis: RFPAnalysis, session: RFPSession) -> RFPAnalysis:
+    if not session.raw_text or not _analysis_needs_recovery(
+        analysis.raw_llm_output,
+        analysis.missing_information,
+        analysis.domain_tags,
+        session.raw_text,
+    ):
+        return analysis
+
+    logger.info(f"Recovering stale RFP analysis for session {session.id}")
+    analysis_data = await analyze_rfp_document(session.raw_text)
+    for key, value in analysis_data.items():
+        setattr(analysis, key, value)
+    session.status = "analyzed"
+    await db.flush()
+    await db.refresh(analysis)
+    return analysis
 
 
 async def create_rfp_session(
@@ -119,13 +166,14 @@ async def get_analysis(db: AsyncSession, session_id: uuid.UUID) -> dict:
         .limit(1)
     )
     analysis = result.scalar_one_or_none()
+    session = await get_session_or_404(db, session_id)
     if not analysis:
-        session = await get_session_or_404(db, session_id)
         return {
             "session_id": str(session_id),
             "status": session.status,
             "analysis": None,
         }
+    analysis = await _recover_analysis_if_needed(db, analysis, session)
     return {
         "session_id": str(session_id),
         "status": "analyzed",

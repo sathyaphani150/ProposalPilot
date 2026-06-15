@@ -104,15 +104,13 @@ _CAPABILITY_TAG_KEYWORDS: dict[str, set[str]] = {
     "Search Optimization": {"search optimization", "string optimizer", "search string", "search relevance", "search result"},
     "Information Retrieval": {"information retrieval", "tf-idf", "tf idf", "ranking", "retrieval"},
     "Query Understanding": {"query intent", "query understanding", "user query", "search query"},
-    "Apache Solr": {"apache solr", "solr"},
     "Product Category Classification": {"category classification", "categorization", "classify product", "classify service"},
     "Machine Learning": {"machine learning", "ml algorithm", "word2vec", "svm", "naive bayes", "model training"},
-    "Government Procurement": {"government e-marketplace", "gem", "procurement", "buyer", "seller"},
     "Cognitive Search": {"cognitive search", "semantic search", "intelligent search"},
     "Search Relevance": {"relevance", "precision", "recall", "ndcg", "mrr"},
     "Catalog Management": {"catalog", "product catalog", "service catalog", "seller upload"},
     "API Integration": {"api", "apis", "microservice", "micro-service", "integration", "integrate"},
-    "GCC Deployment": {"gcc", "government community cloud", "deployment", "hosting"},
+    "Cloud/Hosted Deployment": {"cloud", "deployment", "hosting"},
     "Security": {"security", "privacy", "encryption", "audit", "access control", "sso"},
     "Operations & Maintenance": {"operation and maintenance", "o&m", "maintenance", "sla", "support"},
 }
@@ -125,12 +123,14 @@ _SECTION_CATEGORIES = (
     "integration_requirement",
     "data_requirement",
     "compliance_security",
+    "infrastructure_operational_requirement",
     "service_level",
     "evaluation_criteria",
     "bidder_eligibility",
     "procurement_process",
     "legal_disclaimer",
     "commercial_terms",
+    "buyer_contact_or_location",
     "annexure/forms",
     "irrelevant_noise",
 )
@@ -141,8 +141,105 @@ _EXCLUDED_SECTION_CATEGORIES = {
     "legal_disclaimer",
     "commercial_terms",
     "annexure/forms",
+    "buyer_contact_or_location",
     "evaluation_criteria",
     "irrelevant_noise",
+}
+
+_TRUST_GATE_NOISE_TERMS = {
+    "audited balance",
+    "balance sheet",
+    "statutory auditor",
+    "certificate of incorporation",
+    "turnover",
+    "net worth",
+    "blacklisted",
+    "blacklisting",
+    "emd",
+    "earnest money",
+    "bid submission",
+    "pre-bid meeting",
+    "pre bid meeting",
+    "date of bid opening",
+    "bid opening",
+    "contact details",
+    "address",
+    " floor",
+    "building",
+    "new delhi",
+    "connaught place",
+    "disclaimer",
+    "no liability",
+    "no representation",
+    "bidder shall bear",
+    "cost of bid",
+    "annexure",
+    "self-certified",
+    "self certified",
+    "notarized",
+    "gst",
+    "companies act",
+    "llp act",
+    "independent advice",
+    "not an agreement",
+    "not an offer",
+}
+
+_TECHNICAL_SIGNAL_TERMS = {
+    "nlp",
+    "nlu",
+    "natural language processing",
+    "search string optimization",
+    "string optimizer",
+    "stop-word",
+    "stop word",
+    "stemming",
+    "lemmatization",
+    "tokenization",
+    "normalization",
+    "noise removal",
+    "feature extraction",
+    "category classifier",
+    "category classification",
+    "tf-idf",
+    "tf idf",
+    "word2vec",
+    "support vector machine",
+    "svm",
+    "naive bayes",
+    "cognitive search",
+    "search relevance",
+    "query understanding",
+    "seller category suggestion",
+}
+
+_INTEGRATION_SIGNAL_TERMS = {
+    "microservice",
+    "micro-service",
+    "api",
+    "existing web service",
+    "apache solr",
+    "solr",
+    "current search architecture",
+    "integration",
+    "consumed by apis",
+}
+
+_INFRA_OPERATIONAL_SIGNAL_TERMS = {
+    "gcc infrastructure",
+    "hosting",
+    "deployment",
+    "install",
+    "commission",
+    "operate",
+    "maintain",
+    "operation and maintenance",
+    "o&m",
+    "availability",
+    "cloud service",
+    "performance",
+    "observability",
+    "support",
 }
 
 _ADMIN_TERMS = {
@@ -360,6 +457,19 @@ def _is_tender_boilerplate(line: str) -> bool:
         "earnest money deposit",
         "emd",
         "annexure",
+        "certificate of incorporation",
+        "ca certificate",
+        "iso certificate",
+        "cmmi",
+        "bid validity",
+        "corrigendum",
+        "queries from bidders",
+        "bidder shall bear",
+        "cost of bid",
+        "independent advice",
+        "reserves right to reject",
+        "no liability",
+        "no representation",
     }
     return any(term in lower for term in boilerplate_terms)
 
@@ -381,6 +491,27 @@ def _is_low_value_unit(unit: str) -> bool:
         "bid document through offline",
     }
     return any(term in lower for term in low_value_terms)
+
+
+def _contains_any(text: str, terms: set[str]) -> bool:
+    lower = text.lower()
+    return any(term in lower for term in terms)
+
+
+def _has_solution_signal(text: str) -> bool:
+    return _contains_any(text, _TECHNICAL_SIGNAL_TERMS | _INTEGRATION_SIGNAL_TERMS | _INFRA_OPERATIONAL_SIGNAL_TERMS)
+
+
+def _has_trust_gate_noise(text: str) -> bool:
+    lower = f" {text.lower()} "
+    return any(term in lower for term in _TRUST_GATE_NOISE_TERMS)
+
+
+def _is_solution_scope_noise(text: str) -> bool:
+    lower = text.lower()
+    if _contains_any(lower, _TECHNICAL_SIGNAL_TERMS | _INTEGRATION_SIGNAL_TERMS):
+        return False
+    return _has_trust_gate_noise(text) or _is_tender_boilerplate(text) or _is_admin_only(text)
 
 
 def _dedupe(items: list[str]) -> list[str]:
@@ -449,9 +580,86 @@ def _pick_units(
 
 def _classify_document_section(unit: str) -> tuple[str, float, str]:
     lower = unit.lower()
+    eligibility_terms = {
+        "audited balance sheet",
+        "audited books of accounts",
+        "copy of audited",
+        "turnover",
+        "net worth",
+        "certificate of incorporation",
+        "statutory auditor",
+        "blacklisting declaration",
+        "iso",
+        "cmmi",
+        "company registration",
+        "ca certificate",
+    }
+    procurement_terms = {
+        "emd",
+        "earnest money",
+        "bid submission",
+        "pre-bid",
+        "pre bid",
+        "bid opening",
+        "cppp registration",
+        "date/time",
+        "date and time",
+        "queries from bidders",
+        "bid validity",
+        "withdrawal",
+        "corrigendum",
+        "bids received after closing",
+        "shall be rejected",
+        "bidder registration",
+    }
+    legal_terms = {
+        "no liability",
+        "no representation",
+        "not an agreement",
+        "not an offer",
+        "bidder shall bear",
+        "cost of bid",
+        "accuracy",
+        "adequacy",
+        "correctness",
+        "independent advice",
+        "reserves right to reject",
+        "disclaimer",
+    }
+    contact_terms = {
+        "address",
+        "floor",
+        "tower",
+        "building",
+        "connaught place",
+        "new delhi",
+        "email",
+        "phone",
+        "telephone",
+        "contact details",
+        "jeevan bharti",
+    }
+    compliance_terms = {"ipr ownership", "ipr", "data residency", "confidentiality", "security breach", "audit", "access control", "nda"}
+
+    if any(term in lower for term in contact_terms) and not _has_solution_signal(lower):
+        return "buyer_contact_or_location", 0.94, "Buyer address/contact/location text, not solution scope."
+    if any(term in lower for term in legal_terms) and not _has_solution_signal(lower):
+        return "legal_disclaimer", 0.94, "Legal/disclaimer language, not delivery scope."
+    if any(term in lower for term in eligibility_terms) and not _has_solution_signal(lower):
+        return "bidder_eligibility", 0.95, "Bidder qualification or financial evidence requirement."
+    if any(term in lower for term in procurement_terms) and not _has_solution_signal(lower):
+        return "procurement_process", 0.95, "Tender process instruction."
+    if any(term in lower for term in _INTEGRATION_SIGNAL_TERMS):
+        return "integration_requirement", 0.94, "Integration or platform touchpoint."
+    if any(term in lower for term in _TECHNICAL_SIGNAL_TERMS):
+        return "technical_requirement", 0.94, "Technical solution feature."
+    if any(term in lower for term in _INFRA_OPERATIONAL_SIGNAL_TERMS):
+        return "infrastructure_operational_requirement", 0.88, "Deployment, hosting, support, or operations requirement."
+    if any(term in lower for term in compliance_terms):
+        return "compliance_security", 0.86, "Security, compliance, confidentiality, or IPR requirement."
+
     category_rules: tuple[tuple[str, set[str], str], ...] = (
         ("legal_disclaimer", {"disclaimer", "no contractual obligation", "not a recommendation", "warranty", "copyright", "confidential"}, "Legal/disclaimer language, not delivery scope."),
-        ("annexure/forms", {"annexure", "form ", "format for", "declaration", "certificate"}, "Form or annexure instruction."),
         ("bidder_eligibility", {"eligibility", "turnover", "net worth", "audited balance sheet", "statutory auditor", "blacklisting", "experience certificate"}, "Bidder qualification evidence."),
         ("procurement_process", {"bid submission", "submission of bid", "bids received after closing", "shall be rejected", "emd", "earnest money", "pre-bid", "pre bid", "bidder registration", "e-tender", "tendering portal", "last date"}, "Tender process instruction."),
         ("evaluation_criteria", {"evaluation", "technical score", "financial score", "scoring", "marks", "qcbs", "l1"}, "Bid evaluation criteria."),
@@ -462,7 +670,8 @@ def _classify_document_section(unit: str) -> tuple[str, float, str]:
         ("service_level", {"operation and maintenance", "o&m", "maintenance", "sla", "uptime", "support", "availability", "latency"}, "Operational or service-level requirement."),
         ("non_functional_requirement", {"performance", "scalable", "high availability", "latency", "throughput", "response time"}, "Non-functional quality attribute."),
         ("technical_requirement", {"nlp", "natural language", "stop word", "stemming", "lemmatization", "tokenization", "normalization", "tf-idf", "word2vec", "svm", "naive bayes", "machine learning", "classification"}, "Technical solution feature."),
-        ("business_context", {"business problem", "objective", "purpose", "current", "buyers", "sellers", "procurement leakage", "non-availability"}, "Business context or desired outcome."),
+        ("annexure/forms", {"annexure", "format for", "declaration", "certificate"}, "Form or annexure instruction."),
+        ("business_context", {"business problem", "objective", "purpose", "current", "users", "stakeholders", "non-availability"}, "Business context or desired outcome."),
         ("solution_scope", {"scope of work", "solution", "implement", "develop", "provide", "build", "search"}, "General solution scope."),
     )
     for category, keywords, reason in category_rules:
@@ -513,6 +722,22 @@ def _infer_domain_tags(raw_text: str) -> list[str]:
         for tag, keywords in _CAPABILITY_TAG_KEYWORDS.items()
         if any(_contains_term(lower, keyword) for keyword in keywords)
     ]
+    if _has_search_nlp_signals(lower):
+        required_search_tags = [
+            "NLP",
+            "Search Optimization",
+            "Information Retrieval",
+            "Query Understanding",
+            "Machine Learning",
+            "Search Relevance",
+        ]
+        if any(term in lower for term in ("category", "catalog", "taxonomy", "seller", "classification")):
+            required_search_tags.extend(["Product Category Classification", "Catalog Management"])
+        if any(term in lower for term in ("api", "microservice", "micro-service", "integration", "web service")):
+            required_search_tags.append("API Integration")
+        if any(term in lower for term in ("cloud", "deployment", "hosting")):
+            required_search_tags.append("Cloud/Hosted Deployment")
+        tags = [*required_search_tags, *tags]
     if not tags:
         generic_rules = {
             "Workflow Automation": {"workflow", "approval", "case management"},
@@ -525,13 +750,37 @@ def _infer_domain_tags(raw_text: str) -> list[str]:
             for tag, keywords in generic_rules.items()
             if any(_contains_term(lower, keyword) for keyword in keywords)
         ]
-    return tags[:10]
+    unique_tags: list[str] = []
+    seen_tags: set[str] = set()
+    for tag in tags:
+        normalized = tag.lower()
+        if normalized not in seen_tags:
+            seen_tags.add(normalized)
+            unique_tags.append(tag)
+    return unique_tags[:12]
 
 
 def _contains_term(text: str, term: str) -> bool:
     if " " in term:
         return term in text
     return re.search(rf"\b{re.escape(term)}\b", text) is not None
+
+
+def _has_search_nlp_signals(lower_text: str) -> bool:
+    search_terms = ("search", "query", "solr", "string optimizer", "relevance")
+    nlp_terms = (
+        "natural language processing",
+        "nlp",
+        "lemmatization",
+        "stemming",
+        "tokenization",
+        "tf-idf",
+        "word2vec",
+        "svm",
+        "naive bayes",
+        "category classification",
+    )
+    return any(term in lower_text for term in search_terms) and any(term in lower_text for term in nlp_terms)
 
 
 def _estimate_complexity(analysis: dict[str, Any], raw_text: str) -> str:
@@ -705,12 +954,20 @@ def _looks_like_search_nlp_opportunity(raw_text: str, tags: list[str] | None = N
     lower = raw_text.lower()
     tag_set = set(tags or [])
     return bool(
-        {"NLP", "Search Optimization", "Apache Solr", "Product Category Classification"} & tag_set
-    ) or any(term in lower for term in ("natural language processing", "apache solr", "string optimizer", "lemmatization"))
+        {"NLP", "Search Optimization", "Product Category Classification"} & tag_set
+    ) or _has_search_nlp_signals(lower)
 
 
 def _missing_information_questions(raw_text: str, tags: list[str]) -> list[str]:
     if _looks_like_search_nlp_opportunity(raw_text, tags):
+        lower = raw_text.lower()
+        search_stack_question = "What search engine, schema design, analyzers, indexes, and query handlers are currently used?"
+        infrastructure_question = "What hosting resources, deployment constraints, observability tools, and approval gates are available?"
+        runtime_question = (
+            "Are GPUs allowed or required, or must the solution run on CPU-only infrastructure?"
+            if any(term in lower for term in ("machine learning", "ml", "model", "nlp"))
+            else "What runtime, scaling, and performance constraints should the search optimization layer satisfy?"
+        )
         return [
             "What is the current search success rate and zero-result query rate?",
             "Which search relevance metrics will define success: Precision@K, Recall@K, NDCG, MRR, conversion, or another KPI?",
@@ -718,11 +975,11 @@ def _missing_information_questions(raw_text: str, tags: list[str]) -> list[str]:
             "What is the average and peak search volume per day, and what latency SLA is expected?",
             "Are historical search logs, clickstream data, conversion events, and zero-result query logs available?",
             "Is labeled training data available for product/service category classification?",
-            "What Apache Solr version, schema design, analyzers, indexes, and query handlers are currently used?",
+            search_stack_question,
             "Which APIs, events, or batch interfaces are available for integration with the existing search architecture?",
             "Is multilingual search, synonym handling, spelling correction, transliteration, or semantic search expected?",
-            "What GCC infrastructure resources, deployment constraints, observability tools, and approval gates are available?",
-            "Are GPUs allowed or required, or must the solution run on CPU-only government infrastructure?",
+            infrastructure_question,
+            runtime_question,
             "What security, data residency, audit logging, and IPR ownership constraints are non-negotiable?",
             "What is the expected O&M duration, support window, SLA model, and incident response expectation?",
             "Who owns ongoing model retraining, relevance tuning, taxonomy changes, and feedback-loop governance?",
@@ -779,12 +1036,28 @@ def _normalized_requirements(raw_text: str, analysis: dict[str, Any]) -> list[di
     if search_scope:
         specs = [
             (
-                "NLP Search String Optimization",
+                "Search Query Optimization",
                 "Build a query preprocessing and optimization layer that extracts product/service-relevant terms from buyer search queries using stop-word removal, stemming, lemmatization, tokenization, normalization, and noise removal.",
                 "Functional",
                 "Critical",
                 {"string optimizer", "stop word", "stemming", "lemmatization", "tokenization", "normalization", "noise removal"},
                 "This is the heart of the solution: improving search relevance before the query reaches the search engine.",
+            ),
+            (
+                "Query Preprocessing Pipeline",
+                "Preprocess buyer queries before search execution, including cleanup, normalization, linguistic processing, and feature preparation.",
+                "Functional",
+                "Critical",
+                {"query", "search string", "tokenization", "normalization", "stop word", "lemmatization"},
+                "This makes query intelligence reusable instead of embedding it directly into search-engine configuration.",
+            ),
+            (
+                "Stop-word Removal, Stemming, Lemmatization, Tokenization, Normalization, Noise Removal",
+                "Implement core NLP preprocessing operations needed to transform noisy buyer search text into search-ready terms.",
+                "Functional",
+                "Critical",
+                {"stop word", "stemming", "lemmatization", "tokenization", "normalization", "noise removal"},
+                "These operations are the explicit NLP mechanics behind search string optimization.",
             ),
             (
                 "Product/Service Feature Extraction",
@@ -795,12 +1068,12 @@ def _normalized_requirements(raw_text: str, analysis: dict[str, Any]) -> list[di
                 "Feature extraction should support both buyer search and seller catalog categorization.",
             ),
             (
-                "Product Category Classification",
+                "Category Classification Engine",
                 "Classify products and services into the correct category using NLP/ML models and taxonomy-aware rules.",
                 "Functional",
                 "Critical",
                 {"category classification", "categorization", "classify product", "classify service"},
-                "Wrong category assignment can directly degrade procurement discovery and seller onboarding quality.",
+                "Wrong category assignment can directly degrade discovery quality, search relevance, and onboarding quality.",
             ),
             (
                 "ML/NLP Algorithm Layer",
@@ -811,12 +1084,20 @@ def _normalized_requirements(raw_text: str, analysis: dict[str, Any]) -> list[di
                 "Algorithm choice should be validated against labeled data, relevance KPIs, latency, and explainability needs.",
             ),
             (
-                "Apache Solr Integration",
-                "Integrate the NLP optimization layer with the existing Apache Solr search architecture through APIs or microservices without disrupting current search operations.",
+                "Search Stack Integration",
+                "Integrate the optimization layer with the existing search architecture through APIs or microservices without disrupting current search operations.",
                 "Integration",
                 "Critical",
-                {"apache solr", "solr", "api", "microservice", "micro-service"},
-                "Solr integration is a delivery risk and proposal differentiator; the design should augment, not blindly replace, current search.",
+                {"search architecture", "search engine", "api", "microservice", "micro-service"},
+                "Search-stack integration is a delivery risk and proposal differentiator; the design should augment, not blindly replace, current search.",
+            ),
+            (
+                "API/Microservice Exposure",
+                "Expose NLP optimization and classification capabilities through APIs or microservices consumable by the existing platform.",
+                "Integration",
+                "Critical",
+                {"api", "apis", "microservice", "micro-service", "consumed by apis"},
+                "This keeps the intelligence layer modular and easier to integrate with existing platform services.",
             ),
             (
                 "Seller Upload Categorization Support",
@@ -827,11 +1108,19 @@ def _normalized_requirements(raw_text: str, analysis: dict[str, Any]) -> list[di
                 "Improving seller-side categorization reduces downstream search ambiguity.",
             ),
             (
-                "GCC Hosting and Deployment",
-                "Deploy the solution within the required GCC/government infrastructure environment while meeting data residency, security, and operational constraints.",
+                "Catalog Fitment and Cleansing Support",
+                "Identify catalog/category fitment issues that reduce search quality and support targeted cleanup or taxonomy alignment.",
+                "Data",
+                "High",
+                {"catalog", "category", "taxonomy", "seller"},
+                "Catalog quality is a practical dependency for reliable search relevance and category classification.",
+            ),
+            (
+                "Hosting and Deployment",
+                "Deploy the solution within the required hosting environment while meeting data residency, security, and operational constraints.",
                 "Operational",
                 "Critical",
-                {"gcc", "government community cloud", "hosting", "deployment"},
+                {"cloud", "hosting", "deployment"},
                 "Infrastructure constraints can change architecture, model selection, observability, and cost.",
             ),
             (
@@ -843,7 +1132,7 @@ def _normalized_requirements(raw_text: str, analysis: dict[str, Any]) -> list[di
                 "Search relevance is not one-and-done; it needs tuning, monitoring, and ownership.",
             ),
             (
-                "Security and IPR Compliance",
+                "Security, Confidentiality, and IPR Compliance",
                 "Meet security, auditability, data handling, and IPR ownership requirements applicable to government deployment.",
                 "Compliance",
                 "High",
@@ -855,6 +1144,7 @@ def _normalized_requirements(raw_text: str, analysis: dict[str, Any]) -> list[di
             evidence = _evidence_for(raw_text, keywords)
             if evidence:
                 requirements.append(_requirement(name, description, category, priority, evidence, interpretation))
+        return requirements[:14]
 
     legacy_sources = [
         ("Functional", analysis.get("functional_requirements", [])),
@@ -895,7 +1185,7 @@ def _score_bid(analysis: dict[str, Any], requirements: list[dict[str, Any]], raw
     tags = set(analysis.get("domain_tags", []))
     search_scope = _looks_like_search_nlp_opportunity(raw_text, list(tags))
     strategic_fit = 84 if search_scope else 72
-    technical_fit = 84 if {"NLP", "Search Optimization", "Apache Solr"} & tags else 70
+    technical_fit = 84 if {"NLP", "Search Optimization", "Product Category Classification", "API Integration"} & tags else 70
     domain_fit = 78 if "Government Procurement" in tags else 65
     delivery_risk = 62 if search_scope else 68
     commercial = 72 if requirements else 58
@@ -917,6 +1207,8 @@ def _score_bid(analysis: dict[str, Any], requirements: list[dict[str, Any]], raw
 
 def _risk_assessment(raw_text: str, tags: list[str]) -> list[dict[str, str]]:
     if _looks_like_search_nlp_opportunity(raw_text, tags):
+        search_stack = "search stack"
+        deployment_context = "target environment"
         return [
             {
                 "risk_title": "Poor quality catalog data",
@@ -943,11 +1235,11 @@ def _risk_assessment(raw_text: str, tags: list[str]) -> list[dict[str, str]]:
                 "owner": "Joint",
             },
             {
-                "risk_title": "Solr integration complexity",
+                "risk_title": f"{search_stack} integration complexity",
                 "severity": "Medium",
                 "probability": "Medium",
                 "impact": "Existing schema, analyzers, indexes, and query handlers may constrain NLP query rewriting.",
-                "mitigation": "Request Solr version, schema, representative queries, staging access, and integration test windows.",
+                "mitigation": f"Request {search_stack} version/schema details, representative queries, staging access, and integration test windows.",
                 "owner": "Client",
             },
             {
@@ -975,11 +1267,11 @@ def _risk_assessment(raw_text: str, tags: list[str]) -> list[dict[str, str]]:
                 "owner": "Joint",
             },
             {
-                "risk_title": "GCC deployment limitations",
+                "risk_title": f"{deployment_context} deployment limitations",
                 "severity": "Medium",
                 "probability": "Medium",
                 "impact": "Approved infrastructure may limit model choice, GPU use, dependencies, observability, or deployment automation.",
-                "mitigation": "Validate GCC constraints, approved libraries, CI/CD process, monitoring stack, and data movement rules.",
+                "mitigation": f"Validate {deployment_context} constraints, approved libraries, CI/CD process, monitoring stack, and data movement rules.",
                 "owner": "Client",
             },
             {
@@ -1021,20 +1313,22 @@ def _risk_assessment(raw_text: str, tags: list[str]) -> list[dict[str, str]]:
 
 def _delivery_complexity(raw_text: str, tags: list[str]) -> dict[str, Any]:
     if _looks_like_search_nlp_opportunity(raw_text, tags):
+        search_stack = "search stack"
+        deployment_context = "deployment environment"
         return {
             "complexity_level": "Medium-High",
-            "why": "The work combines NLP/search relevance, category taxonomy, Solr integration, government infrastructure constraints, and ongoing tuning.",
+            "why": f"The work combines NLP/search relevance, category taxonomy, {search_stack} integration, deployment constraints, and ongoing tuning.",
             "main_complexity_drivers": [
                 "Search relevance depends on real query logs, labeled data, and catalog quality.",
-                "Solr integration must preserve current search behavior while adding query optimization.",
-                "GCC deployment may constrain infrastructure, model serving, observability, and security approvals.",
+                f"{search_stack} integration must preserve current search behavior while adding query optimization.",
+                f"{deployment_context} may constrain infrastructure, model serving, observability, and security approvals.",
                 "Acceptance requires agreed relevance metrics rather than subjective search quality opinions.",
             ],
             "estimated_delivery_phases": [
                 "Discovery and relevance KPI baseline",
                 "Data/catalog profiling and taxonomy review",
                 "NLP query preprocessing and classification MVP",
-                "Solr API/microservice integration",
+                f"{search_stack} API/microservice integration",
                 "Pilot measurement, tuning, and hardening",
                 "Production rollout and O&M transition",
             ],
@@ -1050,9 +1344,9 @@ def _delivery_complexity(raw_text: str, tags: list[str]) -> dict[str, Any]:
                 "Optional UI/UX or relevance dashboard engineer",
             ],
             "dependencies": [
-                "Solr schema/version and staging access",
+                f"{search_stack} schema/version and staging access",
                 "Search logs, catalog data, and labeled category examples",
-                "GCC deployment constraints and approval process",
+                f"{deployment_context} constraints and approval process",
                 "Defined relevance KPIs and acceptance dataset",
             ],
         }
@@ -1069,25 +1363,30 @@ def _delivery_complexity(raw_text: str, tags: list[str]) -> dict[str, Any]:
 
 def _architecture_recommendation(raw_text: str, tags: list[str]) -> dict[str, Any]:
     if _looks_like_search_nlp_opportunity(raw_text, tags):
+        search_stack = "existing search stack"
+        query_layer = "Search query rewriting/integration layer"
+        deployment_component = "Deployment, monitoring, logging, and model retraining pipeline"
+        search_assumption = "The client intends to augment rather than replace the existing search engine."
+        deployment_assumption = "The deployment environment allows the required runtime dependencies and model-serving approach."
         return {
-            "direction": "Augment the existing Apache Solr search stack with an NLP-powered query optimization and category intelligence layer exposed through APIs/microservices.",
+            "direction": f"Augment the {search_stack} with an NLP-powered query optimization and category intelligence layer exposed through APIs/microservices.",
             "components": [
                 "Query preprocessing service",
                 "NLP search string optimizer",
                 "Feature/entity extraction",
                 "Product/service category classification model",
                 "Synonym/ontology layer",
-                "Solr query rewriting layer",
+                query_layer,
                 "Search relevance ranking and tuning layer",
                 "Feedback and analytics loop",
                 "Admin/relevance dashboard",
                 "API gateway or microservice integration",
-                "GCC deployment, monitoring, logging, and model retraining pipeline",
+                deployment_component,
             ],
             "assumptions": [
-                "The client intends to augment rather than replace Apache Solr.",
+                search_assumption,
                 "Search logs and representative catalog data can be made available for tuning.",
-                "GCC allows the required runtime dependencies and model-serving approach.",
+                deployment_assumption,
             ],
         }
     return {
@@ -1099,22 +1398,24 @@ def _architecture_recommendation(raw_text: str, tags: list[str]) -> dict[str, An
 
 def _commercial_intelligence(raw_text: str, tags: list[str]) -> dict[str, Any]:
     if _looks_like_search_nlp_opportunity(raw_text, tags):
+        search_stack = "search stack"
+        deployment_context = "deployment environment"
         return {
-            "estimate_disclaimer": "Directional executive estimate only; validate after discovery, data audit, Solr architecture review, and O&M scope confirmation.",
+            "estimate_disclaimer": f"Directional executive estimate only; validate after discovery, data audit, {search_stack} architecture review, and O&M scope confirmation.",
             "estimated_project_size_range": "INR 1.5 Cr - INR 3 Cr depending on MVP, rollout breadth, and O&M duration.",
             "estimated_delivery_cost_range": "INR 80L - INR 1.5 Cr depending on team duration, data preparation, deployment constraints, and support commitments.",
-            "margin_attractiveness": "Medium to High if reusable NLP/search accelerators and Solr integration patterns exist; Medium if heavy data labeling or bespoke taxonomy work is required.",
+            "margin_attractiveness": f"Medium to High if reusable NLP/search accelerators and {search_stack} integration patterns exist; Medium if heavy data labeling or bespoke taxonomy work is required.",
             "major_cost_drivers": [
                 "Data profiling and labeling effort",
-                "Solr integration and performance testing",
-                "GCC deployment approvals and DevOps constraints",
+                f"{search_stack} integration and performance testing",
+                f"{deployment_context} approvals and DevOps constraints",
                 "O&M, relevance tuning, and model retraining ownership",
                 "Security, IPR, and documentation obligations",
             ],
             "pricing_model_recommendation": "Fixed price for discovery plus MVP, then milestone-based rollout and separately priced O&M/relevance tuning.",
             "commercial_risks": [
                 "Unclear data quality and relevance metrics may cause underestimation.",
-                "Fixed-price commitments before Solr/API access could compress margins.",
+                f"Fixed-price commitments before {search_stack}/API access could compress margins.",
                 "O&M expectations may be larger than implementation effort if tuning ownership is vague.",
             ],
         }
@@ -1130,13 +1431,15 @@ def _commercial_intelligence(raw_text: str, tags: list[str]) -> dict[str, Any]:
 
 
 def _competitor_intelligence(raw_text: str, tags: list[str]) -> list[dict[str, str]]:
+    search_stack = "search-stack"
+    deployment_context = "deployment"
     return [
         {
             "competitor_category": "Large system integrators",
             "likely_positioning": "Government credentials, delivery scale, compliance process, and existing public-sector relationships.",
             "strength": "Procurement familiarity and large-team execution capacity.",
             "weakness": "May propose heavier delivery models with slower experimentation cycles.",
-            "counter_position": "Lead with a faster relevance pilot, Solr-specific integration plan, measurable KPIs, and a lean expert team.",
+            "counter_position": f"Lead with a faster relevance pilot, {search_stack} integration plan, measurable KPIs, and a lean expert team.",
         },
         {
             "competitor_category": "IT services companies",
@@ -1149,8 +1452,8 @@ def _competitor_intelligence(raw_text: str, tags: list[str]) -> list[dict[str, s
             "competitor_category": "AI/analytics specialists",
             "likely_positioning": "Model accuracy, data science depth, and advanced NLP capability.",
             "strength": "Strong ML credibility.",
-            "weakness": "May underplay Solr integration, government deployment, and O&M realities.",
-            "counter_position": "Bridge AI accuracy with production Solr integration, explainability, GCC compliance, and support ownership.",
+            "weakness": f"May underplay search integration, {deployment_context} realities, and O&M ownership.",
+            "counter_position": f"Bridge AI accuracy with production search integration, explainability, {deployment_context} compliance, and support ownership.",
         },
         {
             "competitor_category": "Search technology specialists",
@@ -1164,18 +1467,21 @@ def _competitor_intelligence(raw_text: str, tags: list[str]) -> list[dict[str, s
 
 def _prospect_call_prep(raw_text: str, tags: list[str], missing: list[str]) -> dict[str, Any]:
     if _looks_like_search_nlp_opportunity(raw_text, tags):
+        search_stack_question = "What search engine version, schema, analyzers, indexes, and query handlers are currently in production?"
+        deployment_question = "What deployment-environment constraints could block dependencies or model serving?"
+        delivery_guardrail = "Fixed latency or production timeline before search-stack and deployment constraints are validated."
         return {
-            "opening_narrative_30_seconds": "We understand this as a procurement discovery problem, not just a search feature. If buyers cannot find the right products or services, search relevance becomes a business leakage issue. Our recommended path is to baseline current relevance, add an NLP optimization layer around Solr, validate category classification with real data, and roll out in measurable phases.",
+            "opening_narrative_30_seconds": "We understand this as a discovery and relevance problem, not just a search feature. If users cannot find the right products, services, or records, search relevance becomes a business adoption and support issue. Our recommended path is to baseline current relevance, add an NLP optimization layer around the existing search stack, validate classification with real data, and roll out in measurable phases.",
             "strongest_talking_points": [
-                "Frame the goal as reducing procurement leakage through better discovery.",
+                "Frame the goal as improving discovery and reducing abandonment or manual support effort.",
                 "Propose measurable relevance KPIs before committing implementation success.",
-                "Position a Solr-compatible NLP layer rather than a disruptive full replacement.",
-                "Make category classification explainable and tunable for government catalog governance.",
+                "Position an NLP layer that augments the existing search engine rather than forcing a disruptive replacement.",
+                "Make category classification explainable and tunable for catalog or taxonomy governance.",
                 "Separate discovery, MVP, rollout, and O&M so commercial risk is controlled.",
             ],
             "must_ask_discovery_questions": missing[:10],
             "technical_questions": [
-                "What Solr version, schema, analyzers, indexes, and query handlers are currently in production?",
+                search_stack_question,
                 "What latency budget is available for preprocessing and query rewriting?",
                 "Which APIs or integration points can the NLP service use?",
                 "What labeled category data and search logs are available for model validation?",
@@ -1192,11 +1498,11 @@ def _prospect_call_prep(raw_text: str, tags: list[str], missing: list[str]) -> d
                 "What are the known pain points or failure modes in current search?",
                 "Which stakeholder signs off on relevance improvement?",
                 "What happens if catalog data quality limits model accuracy?",
-                "What GCC constraints could block dependencies or model serving?",
+                deployment_question,
                 "Where does the client draw the line between query optimization and full search replacement?",
             ],
             "assumptions_to_validate": [
-                "Apache Solr remains the core search engine.",
+                "The existing search engine remains in scope unless replacement is explicitly required.",
                 "Historical logs and catalog data can be shared securely.",
                 "The first release can be scoped as a pilot before full rollout.",
                 "Relevance KPIs can be agreed before implementation.",
@@ -1204,7 +1510,7 @@ def _prospect_call_prep(raw_text: str, tags: list[str], missing: list[str]) -> d
             ],
             "avoid_overcommitting_on": [
                 "Exact relevance lift before seeing logs, labels, and catalog quality.",
-                "Fixed latency or production timeline before Solr and GCC constraints are validated.",
+                delivery_guardrail,
                 "Full IPR, retraining, and O&M obligations without legal/commercial review.",
             ],
         }
@@ -1238,28 +1544,35 @@ def _build_executive_report(
         decision = "No Bid"
 
     if search_scope:
+        client_label = _extract_client_name(raw_text) or "The buyer"
+        platform_label = "the search platform"
+        platform_reference = "the existing search platform"
+        search_stack_label = "search-stack integration"
+        deployment_label = "production deployment"
+        architecture_unknown = "search architecture"
+        deployment_unknown = "deployment constraints"
         ceo_brief = (
-            "GeM is seeking to improve procurement search by augmenting keyword-based search with NLP-driven query understanding, "
+            f"{client_label} is seeking to improve search by augmenting keyword-based search with NLP-driven query understanding, "
             "search string optimization, and product/service category classification. The business impact is material: poor search "
-            "relevance can prevent buyers from finding intended products or services, increasing non-availability claims and procurement "
-            "leakage away from GeM. The opportunity is attractive for a team with NLP, information retrieval, Apache Solr integration, "
-            "and government-scale deployment experience. Recommendation: proceed to bid, subject to clarifications on search volume, "
-            "relevance KPIs, training data, Solr architecture, GCC constraints, and O&M ownership."
+            "relevance can prevent users from finding intended products, services, or records, increasing abandonment, support load, "
+            f"or leakage away from {platform_label}. The opportunity is attractive for a team with NLP, information retrieval, {search_stack_label}, "
+            f"and {deployment_label} experience. Recommendation: proceed to bid, subject to clarifications on search volume, "
+            f"relevance KPIs, training data, {architecture_unknown}, {deployment_unknown}, and O&M ownership."
         )
         business_problem = {
             "current_state": "The current search experience appears to rely heavily on keyword-based matching and catalog/category metadata.",
             "pain_points": [
-                "Buyers may fail to find the intended products or services.",
+                "Users may fail to find the intended products, services, or records.",
                 "Search queries may not map cleanly to catalog categories or seller-uploaded descriptions.",
-                "Procurement users may make non-availability claims or move demand outside the platform.",
+                "Poor search relevance may push demand outside the intended platform or increase manual support effort.",
             ],
             "business_consequences": [
-                "Reduced trust in GeM search results.",
-                "Procurement leakage and weaker platform adoption.",
+                f"Reduced trust in {platform_label} search results.",
+                "Demand leakage and weaker platform adoption.",
                 "Higher support and manual discovery burden.",
             ],
-            "desired_future_state": "An NLP-powered search optimization layer that understands query intent, improves category classification, integrates with Solr, and runs reliably in GCC.",
-            "executive_interpretation": "This is a procurement discovery and relevance initiative, not only an algorithm implementation.",
+            "desired_future_state": f"An NLP-powered search optimization layer that understands query intent, improves category classification, integrates with {platform_reference}, and runs reliably in the target deployment environment.",
+            "executive_interpretation": "This is a discovery and relevance initiative, not only an algorithm implementation.",
             "confidence": "high",
             "evidence": _evidence_for(raw_text, {"search", "natural language processing", "solr", "category"}),
         }
@@ -1290,7 +1603,7 @@ def _build_executive_report(
             "delivery_risk": scores["delivery_risk"],
             "commercial_attractiveness": scores["commercial_attractiveness"],
             "competitive_position": scores["competitive_position"],
-            "rationale": "Strong technical fit for NLP/search engineering, but key unknowns remain around data availability, relevance KPIs, search scale, Solr integration, GCC deployment, and O&M ownership." if search_scope else "Potential fit exists, but the opportunity should be held until scope, dependencies, and acceptance criteria are clarified.",
+            "rationale": f"Strong technical fit for NLP/search engineering, but key unknowns remain around data availability, relevance KPIs, search scale, {architecture_unknown}, {deployment_unknown}, and O&M ownership." if search_scope else "Potential fit exists, but the opportunity should be held until scope, dependencies, and acceptance criteria are clarified.",
             "score_breakdown": {
                 "strategic_fit": scores["strategic_fit"],
                 "technical_fit": scores["technical_fit"],
@@ -1316,14 +1629,14 @@ def _build_executive_report(
         "commercial_intelligence": _commercial_intelligence(raw_text, tags),
         "competitor_intelligence": _competitor_intelligence(raw_text, tags),
         "win_strategy": [
-            "Improve procurement discovery, not just search.",
+            "Improve user discovery, not just search.",
             "Show measurable search relevance improvement with agreed KPIs.",
-            "Bring a Solr plus NLP integration accelerator mindset.",
+            "Bring an NLP plus search-stack integration accelerator mindset.",
             "Offer a discovery workshop before full implementation commitment.",
             "Provide explainable product/service category classification.",
             "Include relevance evaluation dashboarding and feedback loops.",
-            "Reduce procurement leakage and non-availability claims.",
-            "Commit to GCC/data residency compliance after validation.",
+            "Reduce abandonment, support load, or leakage caused by poor search relevance.",
+            "Commit to deployment and data residency compliance after validation.",
             "Support clear IPR transfer, knowledge transfer, and O&M governance.",
         ] if search_scope else [
             "Lead with business outcomes and measurable success criteria.",
@@ -1338,7 +1651,7 @@ def _build_executive_report(
             "matched_assets": [],
             "reusable_components": [
                 "NLP/search relevance accelerator",
-                "Solr API integration patterns",
+                "Search API integration patterns",
                 "Category classification pipeline",
                 "Relevance evaluation dashboard",
             ] if search_scope else [],
@@ -1394,7 +1707,7 @@ def _quality_checks(
         "functional_requirements_are_solution_features": not any(term in functionals for term in accidental_noise_terms),
         "procurement_instructions_excluded_from_scope": bool(excluded_noise) and not any(term in requirement_text for term in accidental_noise_terms),
         "missing_information_not_empty": bool(missing),
-        "domain_tags_are_specific": bool(domain_tags & {"NLP", "Search Optimization", "Apache Solr", "Product Category Classification", "API Integration", "GCC Deployment"}),
+        "domain_tags_are_specific": bool(domain_tags & {"NLP", "Search Optimization", "Product Category Classification", "API Integration", "Cloud/Hosted Deployment"}),
         "ceo_brief_answers_business_impact": any(term in ceo_brief.lower() for term in ("impact", "leakage", "business", "recommendation")),
         "bid_recommendation_exists": True,
         "risks_clarifications_win_strategy_delivery_model_exist": True,
@@ -1411,7 +1724,7 @@ def _quality_checks(
     }
 
 
-def _clean_analysis_items(items: Any) -> list[str]:
+def _clean_analysis_items(items: Any, *, solution_field: bool = True) -> list[str]:
     if not isinstance(items, list):
         return []
     cleaned: list[str] = []
@@ -1421,8 +1734,43 @@ def _clean_analysis_items(items: Any) -> list[str]:
             continue
         if _is_low_value_unit(text) or _is_noise_line(text):
             continue
+        if solution_field and _is_solution_scope_noise(text):
+            continue
         cleaned.append(text[:520])
     return _dedupe(cleaned)
+
+
+def _apply_executive_trust_gate(payload: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    removed: list[dict[str, str]] = []
+    gated_keys = (
+        "functional_requirements",
+        "non_functional_requirements",
+        "data_needs",
+        "integration_needs",
+    )
+    for key in gated_keys:
+        kept: list[str] = []
+        for item in payload.get(key, []) or []:
+            text = str(item)
+            if _is_solution_scope_noise(text):
+                category, _, reason = _classify_document_section(text)
+                removed.append(
+                    {
+                        "field": key,
+                        "text": text[:260],
+                        "reclassified_as": category,
+                        "reason": reason,
+                    }
+                )
+            else:
+                kept.append(text)
+        payload[key] = _dedupe(kept)
+    return payload, removed
+
+
+def sanitize_executive_output(payload: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """Remove tender/admin/legal noise before anything is used for leadership output."""
+    return _apply_executive_trust_gate(payload)
 
 
 def _sanitize_analysis_payload(payload: dict[str, Any], raw_text: str) -> dict[str, Any]:
@@ -1440,10 +1788,16 @@ def _sanitize_analysis_payload(payload: dict[str, Any], raw_text: str) -> dict[s
         "timeline_risks",
         "scope_boundaries",
     ):
-        payload[key] = _clean_analysis_items(payload.get(key))
+        payload[key] = _clean_analysis_items(
+            payload.get(key),
+            solution_field=key in {"functional_requirements", "non_functional_requirements", "data_needs", "integration_needs"},
+        )
+
+    payload, trust_gate_removed = sanitize_executive_output(payload)
+    payload["_trust_gate_removed"] = trust_gate_removed
 
     payload["domain_tags"] = _infer_domain_tags(raw_text)
-    payload["missing_information"] = _clean_analysis_items(payload.get("missing_information"))
+    payload["missing_information"] = _clean_analysis_items(payload.get("missing_information"), solution_field=False)
     missing_questions = _missing_information_questions(raw_text, payload["domain_tags"])
     if not payload["missing_information"] or len(payload["missing_information"]) < 6:
         payload["missing_information"] = missing_questions
@@ -1486,15 +1840,13 @@ def _capability_labels(tags: list[str]) -> list[str]:
         "Search Optimization": "search relevance optimization",
         "Information Retrieval": "information retrieval",
         "Query Understanding": "query intent understanding",
-        "Apache Solr": "Apache Solr integration",
         "Product Category Classification": "product/service category classification",
         "Machine Learning": "machine learning",
-        "Government Procurement": "government procurement",
         "Cognitive Search": "cognitive search",
         "Search Relevance": "search relevance measurement",
         "Catalog Management": "catalog management",
         "API Integration": "API/microservice integration",
-        "GCC Deployment": "GCC deployment",
+        "Cloud/Hosted Deployment": "cloud/hosted deployment",
         "Security": "security and auditability",
         "Operations & Maintenance": "operations and maintenance",
     }
@@ -1725,9 +2077,36 @@ def _finalize_analysis_payload(
     extraction_meta: dict[str, Any],
     executive_intelligence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    raw_extraction_internal = {
+        "business_problem": payload.get("business_problem"),
+        "functional_requirements": payload.get("functional_requirements", []),
+        "non_functional_requirements": payload.get("non_functional_requirements", []),
+        "data_needs": payload.get("data_needs", []),
+        "integration_needs": payload.get("integration_needs", []),
+        "compliance_needs": payload.get("compliance_needs", []),
+        "timeline_risks": payload.get("timeline_risks", []),
+        "missing_information": payload.get("missing_information", []),
+        "scope_boundaries": payload.get("scope_boundaries", []),
+        "domain_tags": payload.get("domain_tags", []),
+        "estimated_complexity": payload.get("estimated_complexity"),
+    }
     payload = _sanitize_analysis_payload(payload, raw_text)
+    trust_gate_removed = payload.pop("_trust_gate_removed", [])
     document_sections = _classify_document_sections(raw_text)
     excluded_noise = _excluded_noise_from_sections(document_sections)
+    if trust_gate_removed:
+        excluded_noise = [
+            *excluded_noise,
+            *[
+                {
+                    "category": item["reclassified_as"],
+                    "text": item["text"],
+                    "why_excluded": item["reason"],
+                    "confidence": 0.9,
+                }
+                for item in trust_gate_removed
+            ],
+        ][:32]
     normalized_requirements = _normalized_requirements(raw_text, payload)
     executive_report = _build_executive_report(
         payload,
@@ -1742,6 +2121,7 @@ def _finalize_analysis_payload(
     payload["raw_llm_output"] = {
         **payload,
         "extraction_meta": extraction_meta,
+        "raw_extraction_internal": raw_extraction_internal,
         "document_sections": document_sections,
         "normalized_requirements": normalized_requirements,
         "excluded_noise": excluded_noise,
@@ -1882,8 +2262,11 @@ Return only JSON matching the schema. Do not include markdown.
         logger.warning("RFP LLM extraction unavailable; using deterministic grounded fallback.")
         result, extraction_meta = _deterministic_extract(raw_text)
 
-    payload = _sanitize_analysis_payload(result.model_dump(), raw_text)
+    payload = result.model_dump()
     executive_intelligence = extraction_meta.get("executive_intelligence")
     if not executive_intelligence:
-        executive_intelligence = await _generate_llm_executive_intelligence(raw_text, payload)
+        executive_intelligence = await _generate_llm_executive_intelligence(
+            raw_text,
+            _sanitize_analysis_payload(payload.copy(), raw_text),
+        )
     return _finalize_analysis_payload(payload, raw_text, extraction_meta, executive_intelligence)

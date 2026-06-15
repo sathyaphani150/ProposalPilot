@@ -49,6 +49,31 @@ stakeholders. Avoid generic questions unless they are tailored to the context.
 Return valid JSON matching the schema. Keep content concise, dense, and actionable.
 """
 
+_TENDER_ADMIN_NOISE_TERMS = {
+    "audited",
+    "balance sheet",
+    "statutory auditor",
+    "turnover",
+    "net worth",
+    "emd",
+    "earnest money",
+    "pre-bid",
+    "bid submission",
+    "bid opening",
+    "cppp",
+    "annexure",
+    "no liability",
+    "bidder shall bear",
+    "new delhi",
+    "address",
+    "contact details",
+}
+
+
+def _is_tender_admin_noise(text: str) -> bool:
+    lower = text.lower()
+    return any(term in lower for term in _TENDER_ADMIN_NOISE_TERMS)
+
 
 def _as_text_list(value: Any) -> list[str]:
     if not value:
@@ -97,7 +122,7 @@ def _clean_brief_item(text: str) -> str:
         "addenda",
         "bidder should enclose",
     }
-    if lower in headings or any(term in lower for term in boilerplate_terms):
+    if lower in headings or any(term in lower for term in boilerplate_terms) or _is_tender_admin_noise(text):
         return ""
     return text[:420]
 
@@ -216,6 +241,12 @@ def _executive_intelligence(analysis: RFPAnalysis) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _executive_report(analysis: RFPAnalysis) -> dict[str, Any]:
+    raw = analysis.raw_llm_output or {}
+    value = raw.get("executive_report")
+    return value if isinstance(value, dict) else {}
+
+
 def _executive_narrative(analysis: RFPAnalysis, matches: list[dict[str, Any]]) -> str:
     executive = _executive_intelligence(analysis)
     summary = str(executive.get("executive_summary") or "").strip()
@@ -285,45 +316,70 @@ def _dedupe_text(items: list[str]) -> list[str]:
 
 def _discovery_questions(analysis: RFPAnalysis) -> dict[str, list[str]]:
     missing = _as_text_list(analysis.missing_information)
+    report = _executive_report(analysis)
+    call_prep = report.get("prospect_call_prep") if isinstance(report.get("prospect_call_prep"), dict) else {}
+    if call_prep:
+        return {
+            "business": _dedupe_text(_as_text_list(call_prep.get("must_ask_discovery_questions")))[:8],
+            "integration": _dedupe_text(_as_text_list(call_prep.get("technical_questions")))[:8],
+            "commercial": _dedupe_text(_as_text_list(call_prep.get("commercial_questions")))[:8],
+            "governance": _dedupe_text(_as_text_list(call_prep.get("risk_questions")))[:8],
+            "operations": _dedupe_text(_as_text_list(call_prep.get("assumptions_to_validate")))[:8],
+        }
+
     executive = _executive_intelligence(analysis)
-    summary = str(executive.get("executive_summary") or analysis.business_problem or "this initiative")
     drivers = [str(item) for item in executive.get("business_drivers", []) if str(item).strip()]
     risks = [str(item) for item in executive.get("risks_and_dependencies", []) if str(item).strip()]
 
-    return {
+    functional = _as_text_list(analysis.functional_requirements)
+    integrations = _as_text_list(analysis.integration_needs)
+    data_needs = _as_text_list(analysis.data_needs)
+    compliance = _as_text_list(analysis.compliance_needs)
+    nfrs = _as_text_list(analysis.non_functional_requirements)
+    timelines = _as_text_list(analysis.timeline_risks)
+    boundaries = _as_text_list(analysis.scope_boundaries)
+
+    groups = {
         "business": [
-            f"For {summary[:180]}, what business outcome would make this initiative worth funding?",
-            "Which users, departments, or external stakeholders are most affected by the current problem?",
-            "What is the minimum valuable release versus the full desired scope?",
-            "Who owns final sign-off for scope, budget, acceptance criteria, and go-live readiness?",
-            *[f"How should we measure this driver: {item}" for item in drivers[:2]],
-            *missing[:2],
+            *missing[:3],
+            *[f"What metric should prove this business driver: {item}" for item in drivers[:2]],
         ],
         "operations": [
-            "What current process should the proposed solution improve, replace, automate, or support?",
-            "What volumes, peak periods, languages/locations, user roles, service hours, and support expectations should we design for?",
-            "Which operational activities must continue without disruption during transition, migration, rollout, or support handover?",
+            *[f"Which release phase should include this scope item: {item}" for item in functional[:3]],
+            *[f"What operating owner, support window, and acceptance path apply to: {item}" for item in boundaries[:2]],
         ],
         "data": [
-            "Which datasets, documents, source systems, owners, retention rules, and data-quality constraints must the solution support?",
-            "What reports, exports, dashboards, audit trails, or regulatory evidence are mandatory?",
-            "Who is accountable for data cleansing, reconciliation, sign-off, and ongoing reporting accuracy?",
+            *[f"What source owner, quality threshold, retention rule, and sign-off process apply to: {item}" for item in data_needs[:4]],
         ],
         "integration": [
-            "Which integrations are read-only versus write-back, and when will API documentation and sandbox credentials be available?",
-            "Who owns each upstream/downstream system, and what are the approval, testing, and production access timelines?",
-            "Which integration failures would materially affect business operations, and what fallback process is acceptable?",
+            *[f"What API documentation, sandbox access, payload examples, and approval timeline exist for: {item}" for item in integrations[:4]],
         ],
         "governance": [
-            "Are hosting, security, access control, audit logging, observability, backup, and disaster-recovery standards mandated by the buyer?",
-            "What does UAT sign-off look like, and which stakeholders must approve production release?",
-            "What evidence will the buyer need to prove compliance, security readiness, and operational acceptance?",
+            *[f"What control evidence, approval owner, and test criteria are required for: {item}" for item in [*compliance, *nfrs][:4]],
+            *[f"How should we mitigate this dependency or risk before pricing: {item}" for item in risks[:2]],
         ],
         "commercial": [
-            "Which requirements are fixed scope versus optional, future phase, on-demand support, or change requests?",
-            "What is the expected implementation window, and which dependencies can block kickoff or user acceptance testing?",
-            "Which assumptions should be explicitly excluded from pricing until data, integration, hosting, security, and SLA details are confirmed?",
-            *[f"What is the commercial position if this risk materializes: {item}" for item in risks[:2]],
+            *[f"How should this timeline or dependency affect milestones, pricing assumptions, or change control: {item}" for item in timelines[:3]],
+            *missing[3:6],
+        ],
+    }
+    cleaned = {
+        key: _dedupe_text([question for question in questions if not _is_tender_admin_noise(question)])[:8]
+        for key, questions in groups.items()
+    }
+    if any(cleaned.values()):
+        return cleaned
+
+    return {
+        "business": [
+            "What measurable business outcome and success metric should drive the proposal?",
+            "Which scope items are mandatory for the first release versus later phases?",
+        ],
+        "governance": [
+            "Who owns acceptance criteria, UAT sign-off, security approval, and go-live readiness?",
+        ],
+        "commercial": [
+            "Which assumptions must be protected before committing to fixed price, fixed timeline, or managed-service obligations?",
         ],
     }
 
@@ -511,17 +567,35 @@ def _build_prep_pack_content(
     integrations = _as_text_list(analysis.integration_needs)
     data_needs = _as_text_list(analysis.data_needs)
     compliance = _as_text_list(analysis.compliance_needs)
-    risks = _as_text_list(analysis.timeline_risks)
+    report = _executive_report(analysis)
+    risk_assessment = report.get("risk_assessment")
+    report_risks: list[Any] = risk_assessment if isinstance(risk_assessment, list) else []
+    risks = _dedupe_text(
+        [
+            f"{item.get('risk_title')}: {item.get('impact')}"
+            for item in report_risks
+            if isinstance(item, dict) and item.get("risk_title")
+        ]
+        or _as_text_list(analysis.timeline_risks)
+    )[:8]
     guardrails = _as_text_list(analysis.scope_boundaries)
     formatted_matches = _evidence_filtered_matches(matches, query)
 
     best_match = formatted_matches[0] if formatted_matches else None
     if best_match:
-        expertise_story = (
-            f"We have a relevant internal reference: {best_match['title']} "
-            f"({best_match['match_type']} match, confidence {best_match['confidence_score']}). "
-            f"The reusable evidence is: {best_match['relevance_summary']}"
-        )
+        score = float(best_match.get("confidence_score") or 0)
+        if best_match.get("match_type") == "adjacent" or score < 0.65:
+            expertise_story = (
+                f"Adjacent match only. {best_match['title']} supports marketplace/catalog/search-scale credibility, "
+                "but it does not prove NLP-based query understanding, domain-specific operations, or the required search-stack integration expertise. "
+                "Use as secondary evidence unless stronger KB proof is connected."
+            )
+        else:
+            expertise_story = (
+                f"We have a relevant internal reference: {best_match['title']} "
+                f"({best_match['match_type']} match, confidence {best_match['confidence_score']}). "
+                f"The reusable evidence is: {best_match['relevance_summary']}"
+            )
     else:
         expertise_story = (
             "No strong prior internal match was found yet. Position this as a new delivery "

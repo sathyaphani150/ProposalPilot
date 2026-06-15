@@ -76,6 +76,18 @@ export interface ExecutiveIntelligence {
 }
 
 export interface ExecutiveReport {
+  leadership_snapshot?: {
+    recommendation?: string
+    overall_score?: number
+    one_line_opportunity?: string
+    top_3_reasons_to_bid?: string[]
+    top_3_risks?: string[]
+    top_5_questions_for_client_call?: string[]
+    confidence?: string
+    leadership_ready?: boolean
+    warning?: string
+    [key: string]: unknown
+  }
   ceo_brief: string
   bid_recommendation: {
     decision: string
@@ -98,6 +110,7 @@ export interface ExecutiveReport {
   past_expertise_match: Record<string, unknown>
   proposal_outline: string[]
   quality_checks: Record<string, unknown>
+  excluded_noise_summary?: Record<string, unknown>
   document_section_summary?: Record<string, number>
 }
 

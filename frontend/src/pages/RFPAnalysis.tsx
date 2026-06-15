@@ -181,11 +181,6 @@ function KeyValueGrid({ data, skip = [] }: { data?: Record<string, unknown>; ski
   )
 }
 
-function ReportBullets({ items, empty }: { items?: unknown; empty: string }) {
-  const displayItems = asTextArray(items)
-  return <StrategicList items={displayItems} empty={empty} />
-}
-
 function RequirementCards({ items }: { items?: Array<Record<string, unknown>> }) {
   if (!items?.length) return <p className="readable-text">No solution requirements were normalized.</p>
   return (
@@ -233,25 +228,34 @@ function RiskCards({ items }: { items?: Array<Record<string, unknown>> }) {
 
 function ExecutiveReportView({ report, analysis }: { report: ExecutiveReport; analysis: RFPAnalysisType }) {
   const tabs = [
+    'Leadership Snapshot',
     'CEO Brief',
     'Bid Decision',
-    'Business Problem',
-    'Solution Scope',
-    'Missing Info',
-    'Risks',
+    'Top Risks',
+    'Must-Ask Questions',
+    'Win Strategy',
     'Delivery Plan',
     'Architecture',
-    'CFO View',
+    'Commercial View',
+    'Past Expertise',
+    'Clean Scope',
+    'Business Problem',
+    'Excluded Tender/Admin Noise',
     'Competitor Strategy',
-    'Win Strategy',
     'Prospect Call Prep',
     'Proposal Outline',
-    'Raw Extraction',
+    'Quality Checks',
+    'Debug / Source Extraction',
   ]
   const [activeTab, setActiveTab] = useState(tabs[0])
+  const [debugExpanded, setDebugExpanded] = useState(false)
   const bid = report.bid_recommendation || {}
   const scoreBreakdown = bid.score_breakdown || {}
   const callPrep = report.prospect_call_prep || {}
+  const snapshot = report.leadership_snapshot || {}
+  const qualityChecks = report.quality_checks || {}
+  const leadershipReady = snapshot.leadership_ready !== false && qualityChecks.leadership_ready !== false
+  const leadershipWarning = asText(snapshot.warning) || asText(qualityChecks.warning)
 
   return (
     <div className="content-stack">
@@ -260,9 +264,11 @@ function ExecutiveReportView({ report, analysis }: { report: ExecutiveReport; an
           <div>
             <h3 className="section-title">
               <Info size={20} color="var(--color-primary-light)" />
-              CEO Brief
+              Leadership Snapshot
             </h3>
-            <p className="readable-text" style={{ color: 'var(--color-text-primary)' }}>{report.ceo_brief}</p>
+            <p className="readable-text" style={{ color: 'var(--color-text-primary)' }}>
+              {asText(snapshot.one_line_opportunity) || report.ceo_brief}
+            </p>
           </div>
           <div className="side-stack">
             <div className="insight-card" style={{ padding: '0.9rem' }}>
@@ -279,6 +285,18 @@ function ExecutiveReportView({ report, analysis }: { report: ExecutiveReport; an
         </div>
       </div>
 
+      {!leadershipReady || leadershipWarning ? (
+        <div className="insight-card" style={{ borderColor: 'var(--color-warning)' }}>
+          <h3 className="section-title" style={{ color: 'var(--color-warning)' }}>
+            <AlertTriangle size={20} />
+            Leadership Readiness Warning
+          </h3>
+          <p className="readable-text">
+            {leadershipWarning || 'This report needs review before being used as a leadership-facing brief.'}
+          </p>
+        </div>
+      ) : null}
+
       <div className="insight-card" style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto', padding: '0.65rem' }}>
         {tabs.map((tab) => (
           <button
@@ -291,6 +309,50 @@ function ExecutiveReportView({ report, analysis }: { report: ExecutiveReport; an
           </button>
         ))}
       </div>
+
+      {activeTab === 'Leadership Snapshot' && (
+        <div className="content-stack">
+          <div className="insight-card">
+            <h3 className="section-title"><Target size={20} /> Leadership Snapshot</h3>
+            <KeyValueGrid
+              data={{
+                recommendation: snapshot.recommendation || bid.decision,
+                overall_score: snapshot.overall_score ?? bid.overall_score,
+                one_line_opportunity: snapshot.one_line_opportunity || report.ceo_brief,
+                confidence: snapshot.confidence,
+              }}
+            />
+          </div>
+          <div className="prep-two-column">
+            <InsightSection
+              title="Top Reasons To Bid"
+              icon={<CheckCircle size={18} />}
+              items={asTextArray(snapshot.top_3_reasons_to_bid)}
+              empty="No bid reasons generated."
+            />
+            <InsightSection
+              title="Top Risks"
+              icon={<ShieldAlert size={18} />}
+              items={
+                asTextArray(snapshot.top_3_risks).length
+                  ? asTextArray(snapshot.top_3_risks)
+                  : (report.risk_assessment || []).map((risk) => asText(risk.risk_name) || asText(risk.risk))
+              }
+              empty="No top risks generated."
+            />
+          </div>
+          <InsightSection
+            title="Top Questions For Client Call"
+            icon={<HelpCircle size={18} />}
+            items={
+              asTextArray(snapshot.top_5_questions_for_client_call).length
+                ? asTextArray(snapshot.top_5_questions_for_client_call)
+                : (report.missing_information || []).flatMap((group) => group.questions || []).slice(0, 5)
+            }
+            empty="No client questions generated."
+          />
+        </div>
+      )}
 
       {activeTab === 'CEO Brief' && (
         <div className="prep-two-column">
@@ -322,14 +384,14 @@ function ExecutiveReportView({ report, analysis }: { report: ExecutiveReport; an
         </div>
       )}
 
-      {activeTab === 'Solution Scope' && (
+      {activeTab === 'Clean Scope' && (
         <div className="insight-card">
-          <h3 className="section-title"><ListChecks size={20} /> Real Solution Scope</h3>
+          <h3 className="section-title"><ListChecks size={20} /> Clean Solution Scope</h3>
           <RequirementCards items={report.solution_scope} />
         </div>
       )}
 
-      {activeTab === 'Missing Info' && (
+      {activeTab === 'Must-Ask Questions' && (
         <div className="prep-two-column">
           {(report.missing_information || []).map((group) => (
             <div className="insight-card" key={group.category}>
@@ -340,7 +402,7 @@ function ExecutiveReportView({ report, analysis }: { report: ExecutiveReport; an
         </div>
       )}
 
-      {activeTab === 'Risks' && (
+      {activeTab === 'Top Risks' && (
         <div className="insight-card">
           <h3 className="section-title"><ShieldAlert size={20} /> Risk Assessment</h3>
           <RiskCards items={report.risk_assessment} />
@@ -361,10 +423,30 @@ function ExecutiveReportView({ report, analysis }: { report: ExecutiveReport; an
         </div>
       )}
 
-      {activeTab === 'CFO View' && (
+      {activeTab === 'Commercial View' && (
         <div className="insight-card">
-          <h3 className="section-title"><Activity size={20} /> Commercial / CFO Intelligence</h3>
+          <h3 className="section-title"><Activity size={20} /> Commercial View</h3>
           <KeyValueGrid data={report.commercial_intelligence} />
+        </div>
+      )}
+
+      {activeTab === 'Excluded Tender/Admin Noise' && (
+        <div className="content-stack">
+          <div className="insight-card">
+            <h3 className="section-title"><AlertTriangle size={20} /> Excluded Tender/Admin Noise</h3>
+            <p className="readable-text">
+              Procurement/legal/admin fragments are kept out of leadership-facing scope, risks, and data needs.
+            </p>
+            <KeyValueGrid data={report.excluded_noise_summary} />
+          </div>
+          <div className="prep-two-column">
+            {(report.excluded_noise || []).map((item, index) => (
+              <div className="match-card" key={`${asText(item.category)}-${index}`}>
+                <h4>{asText(item.category) || 'Excluded item'}</h4>
+                <p className="readable-text">{asText(item.text) || asText(item.reason)}</p>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -408,28 +490,53 @@ function ExecutiveReportView({ report, analysis }: { report: ExecutiveReport; an
       )}
 
       {activeTab === 'Proposal Outline' && (
+        <div className="insight-card">
+          <h3 className="section-title"><FileText size={20} /> Proposal Outline</h3>
+          <StrategicList items={report.proposal_outline} empty="No proposal outline." />
+        </div>
+      )}
+
+      {activeTab === 'Quality Checks' && (
         <div className="prep-two-column">
           <div className="insight-card">
-            <h3 className="section-title"><FileText size={20} /> Proposal Outline</h3>
-            <StrategicList items={report.proposal_outline} empty="No proposal outline." />
+            <h3 className="section-title"><CheckCircle size={20} /> Quality Checks</h3>
+            <KeyValueGrid data={(report.quality_checks?.checks || {}) as Record<string, unknown>} />
           </div>
           <div className="insight-card">
-            <h3 className="section-title"><CheckCircle size={20} /> Quality Controls</h3>
-            <KeyValueGrid data={(report.quality_checks?.checks || {}) as Record<string, unknown>} />
+            <h3 className="section-title"><Info size={20} /> Quality Summary</h3>
+            <KeyValueGrid data={report.quality_checks} skip={['checks']} />
           </div>
         </div>
       )}
 
-      {activeTab === 'Raw Extraction' && (
+      {activeTab === 'Past Expertise' && (
+        <div className="insight-card">
+          <h3 className="section-title"><Building size={20} /> Past Expertise Match</h3>
+          <KeyValueGrid data={report.past_expertise_match} />
+        </div>
+      )}
+
+      {activeTab === 'Debug / Source Extraction' && (
         <div className="content-stack">
-          <div className="prep-two-column">
-            <InsightSection title="Legacy Functional Requirements" icon={<ListChecks size={18} />} items={analysis.functional_requirements} empty="No functional requirements." />
-            <InsightSection title="Excluded Noise" icon={<AlertTriangle size={18} />} items={(report.excluded_noise || []).map((item) => `${asText(item.category)}: ${asText(item.text)}`)} empty="No excluded noise captured." />
+          <div className="insight-card">
+            <h3 className="section-title"><FileText size={20} /> Debug / Source Extraction</h3>
+            <p className="readable-text">Raw extraction is internal debugging evidence, not the leadership-facing report.</p>
+            <button className="btn btn-secondary" style={{ marginTop: '0.8rem' }} onClick={() => setDebugExpanded((value) => !value)}>
+              {debugExpanded ? 'Hide Debug Extraction' : 'Show Debug Extraction'}
+            </button>
           </div>
-          <div className="prep-two-column">
-            <InsightSection title="Integration/Data Signals" icon={<Database size={18} />} items={[...(analysis.integration_needs || []), ...(analysis.data_needs || [])]} empty="No integration or data signals." />
-            <InsightSection title="Missing Information" icon={<HelpCircle size={18} />} items={analysis.missing_information} empty="No missing information." />
-          </div>
+          {debugExpanded ? (
+            <>
+              <div className="prep-two-column">
+                <InsightSection title="Legacy Functional Requirements" icon={<ListChecks size={18} />} items={analysis.functional_requirements} empty="No functional requirements." />
+                <InsightSection title="Excluded Noise" icon={<AlertTriangle size={18} />} items={(report.excluded_noise || []).map((item) => `${asText(item.category)}: ${asText(item.text)}`)} empty="No excluded noise captured." />
+              </div>
+              <div className="prep-two-column">
+                <InsightSection title="Integration/Data Signals" icon={<Database size={18} />} items={[...(analysis.integration_needs || []), ...(analysis.data_needs || [])]} empty="No integration or data signals." />
+                <InsightSection title="Missing Information" icon={<HelpCircle size={18} />} items={analysis.missing_information} empty="No missing information." />
+              </div>
+            </>
+          ) : null}
         </div>
       )}
     </div>
