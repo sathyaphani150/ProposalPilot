@@ -192,6 +192,24 @@ async def get_latest_war_room(db: AsyncSession, session_id: uuid.UUID) -> WarRoo
     return result.scalar_one_or_none()
 
 
+async def get_rfp_session_or_404(db: AsyncSession, session_id: uuid.UUID) -> RFPSession:
+    result = await db.execute(select(RFPSession).where(RFPSession.id == session_id))
+    session = result.scalar_one_or_none()
+    if not session:
+        raise NotFoundError(f"RFP session {session_id} not found.")
+    return session
+
+
+async def get_rfp_analysis(db: AsyncSession, session_id: uuid.UUID) -> RFPAnalysis | None:
+    result = await db.execute(
+        select(RFPAnalysis)
+        .where(RFPAnalysis.session_id == session_id)
+        .order_by(RFPAnalysis.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def apply_override(
     db: AsyncSession,
     session_id: uuid.UUID,
