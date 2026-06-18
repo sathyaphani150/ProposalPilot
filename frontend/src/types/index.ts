@@ -183,10 +183,60 @@ export interface WarRoomSession {
   status: WarRoomStatus
   call_notes: string | null
   human_overrides: Record<string, unknown>
-  agent_outputs: Record<AgentName, string | null>
+  agent_outputs: Record<string, unknown>
   matched_projects: SimilarProject[]
   created_at: string
   updated_at: string
+}
+
+export interface ArchitectAgentResult {
+  agent_name: 'architect' | string
+  summary: string
+  recommendations: string[]
+  risks: string[]
+  solution_design: string
+  technology_stack: string[]
+  architecture_summary: string
+  assumptions: string[]
+}
+
+export interface CFOAgentResult {
+  agent_name: 'cfo' | string
+  summary: string
+  recommendations: string[]
+  risks: string[]
+  team_size: number
+  effort_months: number
+  estimated_cost: string
+  cost_risks: string[]
+  delivery_model: string
+}
+
+export interface CompetitorAgentResult {
+  agent_name: 'competitor' | string
+  summary: string
+  recommendations: string[]
+  risks: string[]
+  competitors: string[]
+  differentiators: string[]
+  win_strategy: string[]
+}
+
+export interface ProposalDraft {
+  agent_name: 'proposal' | string
+  summary: string
+  recommendations: string[]
+  risks: string[]
+  executive_summary: string
+  solution_overview: string
+  differentiators: string[]
+}
+
+export interface WarRoomResult {
+  architect: ArchitectAgentResult
+  cfo: CFOAgentResult
+  competitor: CompetitorAgentResult
+  proposal: ProposalDraft
 }
 
 // ── Proposal Types ────────────────────────────────────────────────────────
@@ -263,16 +313,16 @@ export interface FinalProposalContent {
   executive_summary: string
   client_problem_statement: string
   proposed_solution: string
-  relevant_past_experience: string
+  relevant_experience: string
   technical_architecture: string
   technology_stack: string
   delivery_approach: string
-  resource_matrix: ResourceMatrix
-  cost_estimation: CostEstimation
+  resource_matrix: string
+  cost_estimation: string
   competitive_positioning: string
   compliance_matrix: string
-  assumptions_and_exclusions: string
-  risks_and_mitigation: string
+  assumptions: string[]
+  risks: string[]
 }
 
 export interface ResourceMatrix {

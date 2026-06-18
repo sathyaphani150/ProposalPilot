@@ -1,10 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import {
-  Bot,
   BriefcaseBusiness,
   Calculator,
   FileText,
@@ -15,25 +14,74 @@ import {
 } from 'lucide-react'
 import { rfpApi, warRoomApi } from '@/api/endpoints'
 import { getErrorMessage } from '@/api/client'
-import type { AgentName, WarRoomSession } from '@/types'
+import type { RFPAnalysis, WarRoomResult, WarRoomSession } from '@/types'
 
-const agentConfig: Array<{ key: AgentName; label: string; icon: ReactNode; color: string }> = [
-  { key: 'architect', label: 'Tech Architect', icon: <UserRoundCog size={20} />, color: 'var(--color-primary-light)' },
-  { key: 'cfo', label: 'CFO / Pricing', icon: <Calculator size={20} />, color: 'var(--color-success)' },
-  { key: 'competitor', label: 'Competitor Strategist', icon: <Shield size={20} />, color: 'var(--color-warning)' },
-  { key: 'proposal', label: 'Proposal Writer', icon: <FileText size={20} />, color: 'var(--color-info)' },
-  { key: 'supervisor', label: 'Supervisor', icon: <Bot size={20} />, color: 'var(--color-accent)' },
-]
+function SectionCard({
+  title,
+  icon,
+  children,
+}: {
+  title: string
+  icon: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <div className="insight-card">
+      <h3 className="section-title">
+        {icon}
+        {title}
+      </h3>
+      {children}
+    </div>
+  )
+}
+
+function ListBlock({ items, empty }: { items?: string[]; empty: string }) {
+  if (!items || items.length === 0) {
+    return <p className="readable-text" style={{ color: 'var(--color-text-muted)' }}>{empty}</p>
+  }
+  return (
+    <ul className="clean-list">
+      {items.map((item, index) => (
+        <li key={`${item}-${index}`}>{item}</li>
+      ))}
+    </ul>
+  )
+}
+
+function parseGuidance(value: string): string[] {
+  return value
+    .split(/\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+}
+
+function asText(value: unknown): string {
+  if (value === null || value === undefined) return ''
+  if (Array.isArray(value)) return value.map(asText).filter(Boolean).join(', ')
+  if (typeof value === 'object') return ''
+  return String(value)
+}
 
 export function WarRoom() {
   const { sessionId } = useParams<{ sessionId: string }>()
   const navigate = useNavigate()
-  const [callNotes, setCallNotes] = useState('')
-  const [overrideText, setOverrideText] = useState('')
+  const [guidanceText, setGuidanceText] = useState('Reduce scope to MVP\nUse Azure\nKeep costs low')
+  const [autoRunAttempted, setAutoRunAttempted] = useState(false)
 
   const { data: session } = useQuery({
     queryKey: ['rfpSession', sessionId],
     queryFn: () => rfpApi.getById(sessionId!),
+    enabled: !!sessionId,
+  })
+
+  const { data: analysisResponse } = useQuery({
+    queryKey: ['rfpAnalysisForWarRoom', sessionId],
+    queryFn: () => rfpApi.getAnalysis(sessionId!),
     enabled: !!sessionId,
   })
 
@@ -48,27 +96,42 @@ export function WarRoom() {
   })
 
   const warRoom = statusResponse?.war_room as WarRoomSession | null | undefined
+  const analysis = analysisResponse?.analysis as RFPAnalysis | null | undefined
+  const warRoomResult = warRoom?.agent_outputs as Partial<WarRoomResult> | undefined
+  const analysisId = analysis?.id
 
-  const { mutate: startWarRoom, isPending: isStarting } = useMutation({
-    mutationFn: () => warRoomApi.start(sessionId!, callNotes),
+  const { mutate: runWarRoom, isPending: isRunning } = useMutation({
+    mutationFn: () => warRoomApi.run(analysisId!),
     onSuccess: () => {
-      toast.success('War Room completed with grounded agent perspectives.')
+      toast.success('War Room completed with structured agent outputs.')
       refetch()
     },
     onError: (error) => toast.error('Failed to run War Room: ' + getErrorMessage(error)),
   })
 
-  const { mutate: applyOverride, isPending: isOverriding } = useMutation({
-    mutationFn: () => warRoomApi.override(sessionId!, { guidance: overrideText }),
+  const { mutate: rerunWarRoom, isPending: isRerunning } = useMutation({
+    mutationFn: () => warRoomApi.rerun(analysisId!, parseGuidance(guidanceText)),
     onSuccess: () => {
-      toast.success('Human guidance applied and War Room regenerated.')
-      setOverrideText('')
+      toast.success('War Room re-run with your guidance.')
       refetch()
     },
-    onError: (error) => toast.error('Failed to apply override: ' + getErrorMessage(error)),
+    onError: (error) => toast.error('Failed to rerun War Room: ' + getErrorMessage(error)),
   })
 
-  const busy = isLoading || isStarting || isOverriding
+  const busy = isLoading || isRunning || isRerunning
+
+  useEffect(() => {
+    if (analysisId && !warRoom && !autoRunAttempted) {
+      setAutoRunAttempted(true)
+      runWarRoom()
+    }
+  }, [analysisId, autoRunAttempted, runWarRoom, warRoom])
+
+  const architect = asObject(warRoomResult?.architect)
+  const cfo = asObject(warRoomResult?.cfo)
+  const competitor = asObject(warRoomResult?.competitor)
+  const proposal = asObject(warRoomResult?.proposal)
+  const guidanceItems = useMemo(() => parseGuidance(guidanceText), [guidanceText])
 
   return (
     <div className="fade-in">
@@ -79,16 +142,16 @@ export function WarRoom() {
             Agent War Room
           </h1>
           <p style={{ color: 'var(--color-text-secondary)', marginTop: '0.35rem' }}>
-            {session?.title || 'RFP Session'} - Architect, CFO, Competitor, and Proposal strategy
+            {session?.title || 'RFP Session'} - Architecture, finance, competitor, and proposal strategy
           </p>
         </div>
         <div className="flex gap-3">
           <button className="btn btn-secondary" onClick={() => navigate(`/rfp/${sessionId}/prep-pack`)}>
             Back to Prep Pack
           </button>
-          <button className="btn btn-primary" onClick={() => startWarRoom()} disabled={busy}>
+          <button className="btn btn-primary" onClick={() => runWarRoom()} disabled={busy || !analysisId}>
             {busy ? <div className="spinner" style={{ width: 14, height: 14 }} /> : <RefreshCw size={16} />}
-            {warRoom ? 'Regenerate War Room' : 'Run War Room'}
+            Run War Room
           </button>
         </div>
       </div>
@@ -96,31 +159,22 @@ export function WarRoom() {
       <div className="card-elevated" style={{ marginBottom: '1.5rem' }}>
         <div className="grid-2">
           <div>
-            <label className="form-label">Call Notes / Clarifications</label>
+            <label className="form-label">Human Guidance</label>
             <textarea
               className="textarea"
-              value={callNotes}
-              onChange={(event) => setCallNotes(event.target.value)}
-              placeholder="Paste prospect-call notes, constraints, or stakeholder clarifications here before running the War Room."
+              value={guidanceText}
+              onChange={(event) => setGuidanceText(event.target.value)}
+              placeholder="Reduce scope to MVP, use Azure, keep costs low..."
               style={{ minHeight: 130 }}
             />
           </div>
           <div>
-            <label className="form-label">Human Override</label>
-            <textarea
-              className="textarea"
-              value={overrideText}
-              onChange={(event) => setOverrideText(event.target.value)}
-              placeholder="Example: Use offshore-heavy model, reduce scope to MVP, keep architecture simple..."
-              style={{ minHeight: 130 }}
-            />
-            <button
-              className="btn btn-secondary"
-              style={{ marginTop: '0.75rem' }}
-              onClick={() => applyOverride()}
-              disabled={busy || !overrideText.trim()}
-            >
-              Apply Override
+            <label className="form-label">Guidance Notes</label>
+            <div className="insight-card" style={{ minHeight: 130 }}>
+              <ListBlock items={guidanceItems} empty="Add guidance to steer the War Room rerun." />
+            </div>
+            <button className="btn btn-secondary" style={{ marginTop: '0.75rem' }} onClick={() => rerunWarRoom()} disabled={busy || guidanceItems.length === 0 || !analysisId}>
+              Re-run War Room
             </button>
           </div>
         </div>
@@ -131,9 +185,9 @@ export function WarRoom() {
           <Lightbulb size={48} color="var(--color-text-muted)" style={{ margin: '0 auto 1rem' }} />
           <h3 style={{ marginBottom: '0.5rem' }}>No War Room Run Yet</h3>
           <p style={{ color: 'var(--color-text-secondary)', marginBottom: '1.5rem' }}>
-            Run the War Room after generating the prep pack to get multi-role proposal strategy.
+            Run the War Room after analysis to get structured architect, CFO, competitor, and proposal outputs.
           </p>
-          <button className="btn btn-primary" onClick={() => startWarRoom()} disabled={busy}>
+          <button className="btn btn-primary" onClick={() => runWarRoom()} disabled={busy || !analysisId}>
             Run War Room
           </button>
         </div>
@@ -154,29 +208,66 @@ export function WarRoom() {
               </span>
             </div>
           </div>
-
-          <div style={{ display: 'grid', gap: '1rem' }}>
-            {agentConfig.map((agent) => (
-              <div key={agent.key} className="card">
-                <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', color: agent.color }}>
-                  {agent.icon}
-                  {agent.label}
-                </h3>
-                <pre
-                  style={{
-                    whiteSpace: 'pre-wrap',
-                    color: 'var(--color-text-secondary)',
-                    fontFamily: 'var(--font-sans)',
-                    lineHeight: 1.6,
-                    margin: 0,
-                  }}
-                >
-                  {String(warRoom.agent_outputs?.[agent.key] || 'No output generated.')}
-                </pre>
-              </div>
-            ))}
-          </div>
         </>
+      )}
+
+      {warRoomResult && (
+        <div className="content-stack" style={{ marginTop: '1.5rem' }}>
+          <div className="prep-two-column">
+            <SectionCard title="Architect Recommendations" icon={<UserRoundCog size={20} color="var(--color-primary-light)" />}>
+              <p className="readable-text">{asText(architect.solution_design) || asText(architect.architecture_summary) || 'No architecture output generated.'}</p>
+              <div style={{ marginTop: '0.75rem' }}>
+                <h4 style={{ marginBottom: '0.5rem' }}>Technology Stack</h4>
+                <ListBlock items={Array.isArray(architect.technology_stack) ? architect.technology_stack.map(asText).filter(Boolean) : []} empty="No technology stack generated." />
+              </div>
+              <div style={{ marginTop: '0.75rem' }}>
+                <h4 style={{ marginBottom: '0.5rem' }}>Assumptions</h4>
+                <ListBlock items={Array.isArray(architect.assumptions) ? architect.assumptions.map(asText).filter(Boolean) : []} empty="No assumptions generated." />
+              </div>
+              <div style={{ marginTop: '0.75rem' }}>
+                <h4 style={{ marginBottom: '0.5rem' }}>Risks</h4>
+                <ListBlock items={Array.isArray(architect.risks) ? architect.risks.map(asText).filter(Boolean) : []} empty="No risks generated." />
+              </div>
+            </SectionCard>
+            <SectionCard title="CFO Estimates" icon={<Calculator size={20} color="var(--color-success)" />}>
+              <div className="match-card">
+                <p><strong>Team size:</strong> {asText(cfo.team_size) || 'N/A'}</p>
+                <p><strong>Effort:</strong> {asText(cfo.effort_months) || 'N/A'} months</p>
+                <p><strong>Estimated cost:</strong> {asText(cfo.estimated_cost) || 'N/A'}</p>
+                <p><strong>Delivery model:</strong> {asText(cfo.delivery_model) || 'N/A'}</p>
+              </div>
+              <div style={{ marginTop: '0.75rem' }}>
+                <h4 style={{ marginBottom: '0.5rem' }}>Cost Risks</h4>
+                <ListBlock items={Array.isArray(cfo.cost_risks) ? cfo.cost_risks.map(asText).filter(Boolean) : []} empty="No cost risks generated." />
+              </div>
+            </SectionCard>
+          </div>
+
+          <div className="prep-two-column">
+            <SectionCard title="Competitor Strategy" icon={<Shield size={20} color="var(--color-warning)" />}>
+              <div style={{ marginBottom: '0.75rem' }}>
+                <h4 style={{ marginBottom: '0.5rem' }}>Competitors</h4>
+                <ListBlock items={Array.isArray(competitor.competitors) ? competitor.competitors.map(asText).filter(Boolean) : []} empty="No competitor list generated." />
+              </div>
+              <div style={{ marginBottom: '0.75rem' }}>
+                <h4 style={{ marginBottom: '0.5rem' }}>Differentiators</h4>
+                <ListBlock items={Array.isArray(competitor.differentiators) ? competitor.differentiators.map(asText).filter(Boolean) : []} empty="No differentiators generated." />
+              </div>
+              <div>
+                <h4 style={{ marginBottom: '0.5rem' }}>Win Strategy</h4>
+                <ListBlock items={Array.isArray(competitor.win_strategy) ? competitor.win_strategy.map(asText).filter(Boolean) : []} empty="No win strategy generated." />
+              </div>
+            </SectionCard>
+            <SectionCard title="Proposal Summary" icon={<FileText size={20} color="var(--color-info)" />}>
+              <p className="readable-text"><strong>Executive summary:</strong> {asText(proposal.executive_summary) || 'No proposal summary generated.'}</p>
+              <p className="readable-text" style={{ marginTop: '0.75rem' }}><strong>Solution overview:</strong> {asText(proposal.solution_overview) || 'No solution overview generated.'}</p>
+              <div style={{ marginTop: '0.75rem' }}>
+                <h4 style={{ marginBottom: '0.5rem' }}>Differentiators</h4>
+                <ListBlock items={Array.isArray(proposal.differentiators) ? proposal.differentiators.map(asText).filter(Boolean) : []} empty="No proposal differentiators generated." />
+              </div>
+            </SectionCard>
+          </div>
+        </div>
       )}
     </div>
   )

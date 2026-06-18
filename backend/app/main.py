@@ -153,7 +153,7 @@ def _register_exception_handlers(app: FastAPI) -> None:
 
 # ── Routers ────────────────────────────────────────────────────────────────
 def _register_routers(app: FastAPI) -> None:
-    from app.api.v1 import health, rfp, knowledge, sessions, war_room, proposals, expertise, architecture
+    from app.api.v1 import health, rfp, knowledge, sessions, war_room, proposals, expertise, architecture, warroom, proposal
 
     prefix = "/api/v1"
     app.include_router(health.router, prefix=prefix, tags=["Health"])
@@ -161,6 +161,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(knowledge.router, prefix=prefix, tags=["Knowledge Base"])
     app.include_router(expertise.router, prefix=prefix, tags=["Expertise"])
     app.include_router(architecture.router, prefix=prefix, tags=["Architecture"])
+    app.include_router(warroom.router, prefix=prefix, tags=["War Room 2"])
+    app.include_router(proposal.router, prefix=prefix, tags=["Proposal"])
     app.include_router(sessions.router, prefix=prefix, tags=["Sessions"])
     app.include_router(war_room.router, prefix=prefix, tags=["War Room"])
     app.include_router(proposals.router, prefix=prefix, tags=["Proposals"])

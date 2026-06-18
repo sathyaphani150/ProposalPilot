@@ -187,6 +187,21 @@ class WarRoomSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         back_populates="war_room_session", cascade="all, delete-orphan"
     )
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": str(self.id),
+            "rfp_session_id": str(self.rfp_session_id),
+            "status": self.status,
+            "call_notes": self.call_notes,
+            "human_overrides": self.human_overrides or {},
+            "agent_outputs": self.agent_outputs or {},
+            "matched_projects": self.matched_projects or [],
+            "error_message": self.error_message,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
 
 # ── Proposal ──────────────────────────────────────────────────────────────
 class Proposal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -219,3 +234,18 @@ class Proposal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     war_room_session: Mapped["WarRoomSession | None"] = relationship(
         back_populates="proposals"
     )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": str(self.id),
+            "rfp_session_id": str(self.rfp_session_id),
+            "war_room_session_id": str(self.war_room_session_id) if self.war_room_session_id else None,
+            "proposal_type": self.proposal_type,
+            "version": self.version,
+            "content": self.content or {},
+            "docx_path": self.docx_path,
+            "pdf_path": self.pdf_path,
+            "is_published": self.is_published,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }

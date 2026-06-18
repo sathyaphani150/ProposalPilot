@@ -4,6 +4,7 @@
 import { apiClient } from './client'
 import type {
   ArchitectureRecommendation,
+  WarRoomResult,
   ExpertiseMatch,
   KnowledgeItem,
   KnowledgeSearchResult,
@@ -145,11 +146,32 @@ export const warRoomApi = {
     const { data } = await apiClient.get(`/war-room/${sessionId}/status`)
     return data
   },
+
+  run: async (analysisId: string): Promise<WarRoomResult> => {
+    const { data } = await apiClient.post<WarRoomResult>('/warroom/run', { analysis_id: analysisId })
+    return data
+  },
+
+  rerun: async (analysisId: string, guidance: string[]): Promise<WarRoomResult> => {
+    const { data } = await apiClient.post<WarRoomResult>('/warroom/rerun', {
+      analysis_id: analysisId,
+      guidance,
+    })
+    return data
+  },
 }
 
 export const proposalApi = {
   generate: async (sessionId: string, type: 'prep_pack' | 'final_proposal') => {
     const { data } = await apiClient.post(`/proposals/${sessionId}/generate`, { type })
+    return data
+  },
+
+  generateProposal: async (analysisId: string, guidance: string[] = []) => {
+    const { data } = await apiClient.post('/proposal/generate', {
+      analysis_id: analysisId,
+      guidance,
+    })
     return data
   },
 
@@ -163,10 +185,33 @@ export const proposalApi = {
     return data
   },
 
+  getLatestProposal: async (sessionId: string) => {
+    const { data } = await apiClient.get(`/proposal/session/${sessionId}/latest`)
+    return data
+  },
+
   export: async (proposalId: string, format: 'docx' | 'pdf') => {
     const response = await apiClient.post(
-      `/proposals/${proposalId}/export`,
-      { format },
+      `/proposal/export/${format}`,
+      { proposal_id: proposalId },
+      { responseType: 'blob' }
+    )
+    return response.data as Blob
+  },
+
+  exportDocx: async (proposalId: string) => {
+    const response = await apiClient.post(
+      '/proposal/export/docx',
+      { proposal_id: proposalId },
+      { responseType: 'blob' }
+    )
+    return response.data as Blob
+  },
+
+  exportPdf: async (proposalId: string) => {
+    const response = await apiClient.post(
+      '/proposal/export/pdf',
+      { proposal_id: proposalId },
       { responseType: 'blob' }
     )
     return response.data as Blob
