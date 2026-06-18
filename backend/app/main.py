@@ -3,6 +3,7 @@ ProposalPilot AI — FastAPI Application Entry Point
 Handles app factory, middleware, lifespan, and exception handler registration.
 """
 import uuid
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
@@ -35,8 +36,11 @@ async def lifespan(app: FastAPI):
 
     # Initialize Qdrant collections (imported here to avoid circular deps)
     from app.services.vector_service import initialize_qdrant_collections
-    await initialize_qdrant_collections()
-    logger.info("Qdrant collections initialized [OK]")
+    try:
+        await asyncio.wait_for(initialize_qdrant_collections(), timeout=8)
+        logger.info("Qdrant collections initialized [OK]")
+    except Exception as exc:
+        logger.warning(f"Qdrant initialization skipped during startup: {exc}")
 
     # Ensure upload directory exists
     import os

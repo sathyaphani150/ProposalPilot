@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import hashlib
@@ -33,6 +34,20 @@ def _is_non_retryable_llm_error(error: Exception) -> bool:
         "authentication",
     )
     return any(marker in message for marker in non_retryable_markers)
+
+
+def _llm_retry_delay_seconds(error: Exception, attempt: int) -> float:
+    message = str(error).lower()
+    if "rate_limit" not in message and "429" not in message:
+        return min(2.0 * (attempt + 1), 6.0)
+    match = re.search(r"try again in\s+([0-9.]+)\s*(ms|s|sec|second|seconds)?", message)
+    if match:
+        value = float(match.group(1))
+        unit = match.group(2) or "s"
+        if unit == "ms":
+            value = value / 1000
+        return min(max(value + 0.75, 1.0), 12.0)
+    return min(4.0 * (attempt + 1), 12.0)
 
 
 class DeterministicHashEmbeddings:
@@ -98,16 +113,18 @@ class LLMService:
         *,
         temperature: float = 0.2,
         streaming: bool = False,
+        model_name: str | None = None,
     ) -> BaseChatModel:
         """Returns the configured chat model. Always use this — never instantiate directly."""
         provider = settings.LLM_PROVIDER.lower()
+        selected_model = model_name or settings.LLM_MODEL
 
         if provider == "azure":
             if not settings.AZURE_OPENAI_API_KEY or not settings.AZURE_OPENAI_ENDPOINT:
                 raise LLMServiceError("Azure OpenAI credentials are not configured.")
             return AzureChatOpenAI(  # type: ignore[call-arg,arg-type]
                 azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-                azure_deployment=settings.AZURE_OPENAI_DEPLOYMENT_NAME,
+                azure_deployment=model_name or settings.AZURE_OPENAI_DEPLOYMENT_NAME,
                 api_version=settings.AZURE_OPENAI_API_VERSION,
                 api_key=SecretStr(settings.AZURE_OPENAI_API_KEY),
                 temperature=temperature,
@@ -120,7 +137,7 @@ class LLMService:
             if not settings.OPENAI_API_KEY:
                 raise LLMServiceError("OpenAI API key is not configured.")
             return ChatOpenAI(  # type: ignore[call-arg,arg-type]
-                model=settings.LLM_MODEL,
+                model=selected_model,
                 api_key=SecretStr(settings.OPENAI_API_KEY),
                 temperature=temperature,
                 streaming=streaming,
@@ -139,7 +156,7 @@ class LLMService:
             if not settings.GOOGLE_API_KEY:
                 raise LLMServiceError("Google API key is not configured.")
             return chat_google(
-                model="gemini-1.5-pro",
+                model=selected_model if model_name else "gemini-1.5-pro",
                 google_api_key=SecretStr(settings.GOOGLE_API_KEY),
                 temperature=temperature,
                 streaming=streaming,
@@ -155,7 +172,7 @@ class LLMService:
             if not settings.GROQ_API_KEY:
                 raise LLMServiceError("Groq API key is not configured.")
             return ChatGroq(  # type: ignore[call-arg,arg-type]
-                model=settings.LLM_MODEL,
+                model=selected_model,
                 api_key=SecretStr(settings.GROQ_API_KEY),
                 temperature=temperature,
                 streaming=streaming,
@@ -172,7 +189,7 @@ class LLMService:
 
             return ChatOpenAI(  # type: ignore[call-arg,arg-type]
                 base_url=base_url,
-                model=settings.LLM_MODEL,
+                model=selected_model,
                 api_key=SecretStr("ollama"),
                 temperature=temperature,
                 streaming=streaming,
@@ -229,6 +246,7 @@ class LLMService:
         output_schema: Type[T],
         *,
         temperature: float = 0.0,
+        model_name: str | None = None,
     ) -> T:
         """
         Extracts structured data from text using JSON-mode / with_structured_output.
@@ -237,7 +255,7 @@ class LLMService:
         if self._chat_disabled_reason:
             raise LLMServiceError(self._chat_disabled_reason)
 
-        model = self.get_chat_model(temperature=temperature)
+        model = self.get_chat_model(temperature=temperature, model_name=model_name)
 
         # Standard with_structured_output path
         try:
@@ -280,6 +298,7 @@ class LLMService:
                     f"Standard structured extraction attempt {attempt + 1} failed: {e}. "
                     f"Trying regex fallback."
                 )
+                await asyncio.sleep(_llm_retry_delay_seconds(e, attempt))
                 try:
                     # Robust custom JSON extraction fallback matching the user's implementation
                     fallback_response = await model.ainvoke(messages)
@@ -303,6 +322,7 @@ class LLMService:
                         raise LLMServiceError(
                             f"Structured extraction failed after 3 attempts: {str(e)} -> {str(fallback_error)}"
                         )
+                    await asyncio.sleep(_llm_retry_delay_seconds(fallback_error, attempt))
 
         raise LLMServiceError(f"Structured extraction failed unexpectedly: {last_error}")
 
@@ -313,9 +333,10 @@ class LLMService:
         user_content: str,
         *,
         temperature: float = 0.3,
+        model_name: str | None = None,
     ) -> str:
         """Single-turn completion returning plain text."""
-        model = self.get_chat_model(temperature=temperature)
+        model = self.get_chat_model(temperature=temperature, model_name=model_name)
         messages: list[BaseMessage] = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_content),

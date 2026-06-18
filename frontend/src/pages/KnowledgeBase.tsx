@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { knowledgeApi } from '@/api/endpoints'
 import { getErrorMessage } from '@/api/client'
+import { KNOWLEDGE_DOMAIN_OPTIONS, KNOWLEDGE_ITEM_TYPE_OPTIONS } from '@/config/knowledgeOptions'
 import type { KnowledgeItem, KnowledgeItemType, KnowledgeSearchResult } from '@/types'
 
 export function KnowledgeBase() {
@@ -213,11 +214,9 @@ export function KnowledgeBase() {
                 style={{ width: '150px' }}
               >
                 <option value="">All Types</option>
-                <option value="project">Projects</option>
-                <option value="repo">Codebases</option>
-                <option value="doc">Guidelines</option>
-                <option value="case_study">Case Studies</option>
-                <option value="architecture">Architectures</option>
+                {KNOWLEDGE_ITEM_TYPE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.filterLabel}</option>
+                ))}
               </select>
 
               <select
@@ -227,11 +226,9 @@ export function KnowledgeBase() {
                 style={{ width: '150px' }}
               >
                 <option value="">All Domains</option>
-                <option value="fintech">FinTech</option>
-                <option value="healthcare">Healthcare</option>
-                <option value="ecommerce">E-Commerce</option>
-                <option value="logistics">Logistics</option>
-                <option value="aerospace">Aerospace</option>
+                {KNOWLEDGE_DOMAIN_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
               </select>
             </div>
           </div>
@@ -619,11 +616,9 @@ export function KnowledgeBase() {
                     value={itemType}
                     onChange={(e) => setItemType(e.target.value)}
                   >
-                    <option value="project">Project Profile</option>
-                    <option value="repo">Codebase Readme</option>
-                    <option value="doc">General Guideline</option>
-                    <option value="case_study">Case Study</option>
-                    <option value="architecture">Architecture Sheet</option>
+                    {KNOWLEDGE_ITEM_TYPE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -635,11 +630,9 @@ export function KnowledgeBase() {
                     onChange={(e) => setDomain(e.target.value)}
                   >
                     <option value="">No Domain</option>
-                    <option value="fintech">FinTech</option>
-                    <option value="healthcare">Healthcare</option>
-                    <option value="ecommerce">E-Commerce</option>
-                    <option value="logistics">Logistics</option>
-                    <option value="aerospace">Aerospace</option>
+                    {KNOWLEDGE_DOMAIN_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
                   </select>
                 </div>
               </div>

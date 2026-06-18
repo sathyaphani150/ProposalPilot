@@ -4,7 +4,6 @@ import {
   FileText,
   Database,
   Swords,
-  FileOutput,
   PlusCircle,
   Zap,
 } from 'lucide-react'
@@ -99,13 +98,6 @@ function Sidebar() {
           className="nav-item"
           style={{ color: 'var(--color-text-muted)', fontSize: '0.8125rem', cursor: 'default' }}
         >
-          <FileOutput size={16} />
-          Prep Pack
-        </div>
-        <div
-          className="nav-item"
-          style={{ color: 'var(--color-text-muted)', fontSize: '0.8125rem', cursor: 'default' }}
-        >
           <Swords size={16} />
           War Room
         </div>
@@ -137,7 +129,6 @@ function Topbar() {
     if (path === '/knowledge') return 'Knowledge Base'
     if (path.includes('/rfp/new')) return 'New RFP'
     if (path.includes('/analysis')) return 'RFP Analysis'
-    if (path.includes('/prep-pack')) return 'Prospect Prep Pack'
     if (path.includes('/war-room')) return 'Agent War Room'
     if (path.includes('/proposal')) return 'Proposal Editor'
     return 'ProposalPilot AI'

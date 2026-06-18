@@ -98,7 +98,7 @@ def _build_agent_outputs(
                 else "Proof point gap: add or capture a relevant past-project story before final proposal."
             ),
             _lines("Differentiators to emphasize:", [
-                "Evidence-backed prep pack instead of generic proposal drafting.",
+                "Evidence-backed RFP analysis instead of generic proposal drafting.",
                 "Human override loop for scope, architecture, and commercial strategy.",
                 "Clear assumption and risk register before fixed commitments.",
             ], "Use grounded delivery credibility rather than broad AI claims."),
@@ -112,12 +112,12 @@ def _build_agent_outputs(
             _lines("Include in proposed solution:", functional, "Define MVP scope around the highest-value workflow."),
             _lines("Assumptions/exclusions:", guardrails + missing, "List assumptions explicitly in the proposal."),
             _lines("Risk mitigation:", risks + compliance, "Map each risk to a discovery question or delivery control."),
-            "Next proposal step: convert the prep pack, call notes, and War Room outputs into a final proposal package.",
+            "Next proposal step: convert the RFP analysis, call notes, and War Room outputs into a final proposal package.",
         ]
     )
 
     supervisor_notes = [
-        "War Room baseline completed from RFP analysis, prep pack, and optional call notes.",
+        "War Room baseline completed from RFP analysis and optional call notes.",
         "All outputs are directional and should be validated with the client before pricing or scope commitment.",
     ]
     if call_notes:

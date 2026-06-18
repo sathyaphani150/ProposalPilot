@@ -42,20 +42,28 @@ Copy-Item ..\env.example .env   # or it's already copied at root level
 alembic upgrade head
 
 # Start FastAPI server
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8123
 ```
 
-API docs available at: http://localhost:8000/api/docs
+API docs available at: http://127.0.0.1:8123/api/docs
 
 ### 3. Frontend Setup
 
 ```powershell
 cd frontend
 npm install
+
+# Starts FastAPI on 8123 if needed, then starts Vite on 5173
 npm run dev
 ```
 
 Frontend available at: http://localhost:5173
+
+If you intentionally want to run only Vite because the backend is already running elsewhere:
+
+```powershell
+npm run dev:frontend
+```
 
 ### 4. Start Celery Worker (for background tasks)
 

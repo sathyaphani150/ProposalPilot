@@ -83,8 +83,8 @@ export function WarRoom() {
           </p>
         </div>
         <div className="flex gap-3">
-          <button className="btn btn-secondary" onClick={() => navigate(`/rfp/${sessionId}/prep-pack`)}>
-            Back to Prep Pack
+          <button className="btn btn-secondary" onClick={() => navigate(`/rfp/${sessionId}/analysis`)}>
+            Back to RFP Analysis
           </button>
           <button className="btn btn-primary" onClick={() => startWarRoom()} disabled={busy}>
             {busy ? <div className="spinner" style={{ width: 14, height: 14 }} /> : <RefreshCw size={16} />}
@@ -131,7 +131,7 @@ export function WarRoom() {
           <Lightbulb size={48} color="var(--color-text-muted)" style={{ margin: '0 auto 1rem' }} />
           <h3 style={{ marginBottom: '0.5rem' }}>No War Room Run Yet</h3>
           <p style={{ color: 'var(--color-text-secondary)', marginBottom: '1.5rem' }}>
-            Run the War Room after generating the prep pack to get multi-role proposal strategy.
+            Run the War Room after reviewing the RFP analysis to get multi-role proposal strategy.
           </p>
           <button className="btn btn-primary" onClick={() => startWarRoom()} disabled={busy}>
             Run War Room

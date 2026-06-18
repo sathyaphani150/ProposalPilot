@@ -105,3 +105,5 @@ desktop.ini
 # Uploaded storage files (keep directory structure but ignore files)
 backend/storage/uploads/*
 !backend/storage/uploads/.gitkeep
+storage/uploads/*
+!storage/uploads/.gitkeep

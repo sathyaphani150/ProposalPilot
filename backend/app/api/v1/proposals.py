@@ -36,7 +36,7 @@ async def generate_proposal(
         )
 
     proposal = await proposal_service.generate_prep_pack(db, session_id)
-    return proposal.to_dict()
+    return proposal_service.proposal_to_public_dict(proposal)
 
 
 @router.get(
@@ -50,7 +50,7 @@ async def get_latest_prep_pack(
     proposal = await proposal_service.get_latest_prep_pack(db, session_id)
     if not proposal:
         return {"proposal": None}
-    return {"proposal": proposal.to_dict()}
+    return {"proposal": proposal_service.proposal_to_public_dict(proposal)}
 
 
 @router.get(
@@ -62,4 +62,4 @@ async def get_proposal(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     proposal = await proposal_service.get_proposal_or_404(db, proposal_id)
-    return proposal.to_dict()
+    return proposal_service.proposal_to_public_dict(proposal)

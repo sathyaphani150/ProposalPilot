@@ -49,69 +49,80 @@ export interface RFPAnalysis {
       source_line_count?: number
       candidate_unit_count?: number
     }
-    executive_intelligence?: ExecutiveIntelligence
-    executive_report?: ExecutiveReport
+    rfp_intelligence?: RFPIntelligence
     [key: string]: unknown
   }
   created_at: string
 }
 
-export interface ExecutiveInsight {
+export interface RFPSentimentAnalysis {
+  overall_sentiment?: string
+  summary?: string
+  confidence?: string
+  points?: Array<{
+    title?: string
+    insight?: string
+    evidence?: string
+    implication?: string
+  }>
+  recommended_posture?: string
+}
+
+export interface MustAskQuestion {
+  category?: string
+  question: string
+  why_it_matters?: string
+  assumption_to_validate?: string
+}
+
+export interface TalkingPoint {
+  point: string
+  client_angle?: string
+  proof_needed?: string
+}
+
+export interface EvidenceItem {
   title: string
-  insight: string
-  evidence: string
-  source: 'explicit_in_rfp' | 'inferred_from_rfp' | 'derived_from_industry_knowledge' | string
-  confidence: number
-  recommendation: string
+  domain?: string
+  item_type?: string
+  score?: number
+  why_relevant?: string
+  tech_stack?: string[]
+  tags?: string[]
 }
 
-export interface ExecutiveIntelligence {
-  executive_summary: string
-  key_insights: ExecutiveInsight[]
-  opportunity_assessment: ExecutiveInsight[]
-  business_drivers: string[]
-  risks_and_dependencies: string[]
-  recommendations: string[]
-  evidence_mode?: string
+export interface NarrativeSection {
+  title?: string
+  story?: string
+  how_it_helps?: string[]
+  evidence_project_title?: string
+  confidence?: string
 }
 
-export interface ExecutiveReport {
-  leadership_snapshot?: {
-    recommendation?: string
-    overall_score?: number
-    one_line_opportunity?: string
-    top_3_reasons_to_bid?: string[]
-    top_3_risks?: string[]
-    top_5_questions_for_client_call?: string[]
-    confidence?: string
-    leadership_ready?: boolean
-    warning?: string
-    [key: string]: unknown
-  }
-  ceo_brief: string
-  bid_recommendation: {
-    decision: string
-    overall_score: number
-    rationale: string
-    score_breakdown?: Record<string, number>
-    [key: string]: unknown
-  }
-  business_problem: Record<string, unknown>
-  solution_scope: Array<Record<string, unknown>>
-  excluded_noise: Array<Record<string, unknown>>
-  missing_information: Array<{ category: string; questions: string[] }>
-  risk_assessment: Array<Record<string, unknown>>
-  delivery_complexity: Record<string, unknown>
-  architecture_recommendation: Record<string, unknown>
-  commercial_intelligence: Record<string, unknown>
-  competitor_intelligence: Array<Record<string, unknown>>
-  win_strategy: string[]
-  prospect_call_prep: Record<string, unknown>
-  past_expertise_match: Record<string, unknown>
-  proposal_outline: string[]
-  quality_checks: Record<string, unknown>
-  excluded_noise_summary?: Record<string, unknown>
-  document_section_summary?: Record<string, number>
+export interface ArchitectureSection {
+  summary?: string
+  components?: string[]
+  assumptions?: string[]
+  business_view?: string[]
+  technical_view?: string[]
+  data_flow?: string[]
+  integration_flow?: string[]
+  security_operations?: string[]
+  decision_points?: string[]
+  call_prep_questions?: string[]
+  architecture_text?: string
+  mermaid?: string
+  generated_by?: string
+}
+
+export interface RFPIntelligence {
+  sentiment_analysis?: RFPSentimentAnalysis
+  must_ask_questions?: MustAskQuestion[]
+  top_risks?: Array<Record<string, unknown>>
+  talking_points?: TalkingPoint[]
+  narrative?: NarrativeSection
+  relevant_knowledge_evidence?: EvidenceItem[]
+  architecture?: ArchitectureSection
 }
 
 // ── Knowledge Base Types ─────────────────────────────────────────────────

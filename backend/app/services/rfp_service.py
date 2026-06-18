@@ -5,7 +5,9 @@ Business logic for session creation, file storage, and analysis orchestration.
 from __future__ import annotations
 
 import os
+import asyncio
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import aiofiles
@@ -18,9 +20,12 @@ from app.config import get_settings
 from app.exceptions import RFPSessionNotFoundError
 from app.models import RFPSession, RFPAnalysis
 from app.services.document_parser import parse_document
+from app.services.leadership_output import sanitize_analysis_payload_for_leadership
 from app.services.rfp_engine import analyze_rfp_document
 
 settings = get_settings()
+STUCK_ANALYSIS_RECOVERY_SECONDS = 45
+_ANALYSIS_TASKS: dict[str, asyncio.Task[None]] = {}
 
 
 _GENERIC_REGRESSION_TAGS = {
@@ -41,7 +46,10 @@ def _analysis_needs_recovery(
 ) -> bool:
     raw = raw_llm_output or {}
     tags = set(domain_tags or [])
-    if not raw.get("executive_report"):
+    intelligence = raw.get("rfp_intelligence")
+    if not isinstance(intelligence, dict) or not intelligence:
+        return True
+    if not intelligence.get("sentiment_analysis") or not intelligence.get("must_ask_questions"):
         return True
     if raw_text and len(raw_text) >= 1_000 and not missing_information:
         return True
@@ -67,6 +75,93 @@ async def _recover_analysis_if_needed(db: AsyncSession, analysis: RFPAnalysis, s
     await db.flush()
     await db.refresh(analysis)
     return analysis
+
+
+def _analysis_has_been_stuck(session: RFPSession) -> bool:
+    if session.status != "analyzing" or not session.updated_at:
+        return False
+    updated_at = session.updated_at
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - updated_at).total_seconds() >= STUCK_ANALYSIS_RECOVERY_SECONDS
+
+
+async def _run_and_store_analysis(
+    db: AsyncSession,
+    session: RFPSession,
+    *,
+    regenerate: bool,
+) -> RFPAnalysis | None:
+    if not session.raw_text:
+        session.status = "analysis_failed"
+        await db.flush()
+        return None
+
+    logger.info(f"Running direct RFP analysis recovery for session {session.id}")
+    analysis_data = await analyze_rfp_document(session.raw_text, regenerate=regenerate)
+
+    existing_result = await db.execute(
+        select(RFPAnalysis).where(RFPAnalysis.session_id == session.id)
+    )
+    for existing in existing_result.scalars().all():
+        await db.delete(existing)
+    await db.flush()
+
+    analysis = RFPAnalysis(session_id=session.id, **analysis_data)
+    db.add(analysis)
+    session.status = "analyzed"
+    await db.flush()
+    await db.refresh(analysis)
+    return analysis
+
+
+def _discard_finished_task(task_key: str, task: asyncio.Task[None]) -> None:
+    _ANALYSIS_TASKS.pop(task_key, None)
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        logger.warning(f"RFP analysis background task was cancelled for session {task_key}")
+    except Exception as exc:
+        logger.exception(f"RFP analysis background task failed for session {task_key}: {exc}")
+
+
+async def _run_analysis_in_background(session_id: str, *, regenerate: bool) -> None:
+    from app.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(RFPSession).where(RFPSession.id == uuid.UUID(session_id)))
+        session = result.scalar_one_or_none()
+        if not session:
+            logger.warning(f"Skipping background analysis for missing session {session_id}")
+            return
+
+        try:
+            analysis = await _run_and_store_analysis(db, session, regenerate=regenerate)
+            await db.commit()
+            if analysis:
+                logger.info(f"Completed background RFP analysis for session {session_id}")
+            else:
+                logger.warning(f"Background RFP analysis produced no result for session {session_id}")
+        except Exception as exc:
+            await db.rollback()
+            logger.exception(f"Background RFP analysis failed for session {session_id}: {exc}")
+            failure_result = await db.execute(select(RFPSession).where(RFPSession.id == uuid.UUID(session_id)))
+            failure_session = failure_result.scalar_one_or_none()
+            if failure_session:
+                failure_session.status = "analysis_failed"
+                await db.commit()
+
+
+def _schedule_analysis_task(session_id: uuid.UUID, *, regenerate: bool) -> str:
+    task_key = str(session_id)
+    existing_task = _ANALYSIS_TASKS.get(task_key)
+    if existing_task and not existing_task.done():
+        return f"in_process:{task_key}"
+
+    task = asyncio.create_task(_run_analysis_in_background(task_key, regenerate=regenerate))
+    _ANALYSIS_TASKS[task_key] = task
+    task.add_done_callback(lambda done_task: _discard_finished_task(task_key, done_task))
+    return f"in_process:{task_key}"
 
 
 async def create_rfp_session(
@@ -144,17 +239,23 @@ async def list_sessions(
 
 async def trigger_analysis(db: AsyncSession, session: RFPSession) -> str:
     """
-    Update session status to 'analyzing' and dispatch Celery task.
-    Returns the Celery task ID.
-    """
-    session.status = "analyzing"
-    await db.flush()
+    Start RFP analysis without blocking the upload flow.
 
-    # Import here to avoid circular dependency
-    from app.tasks.ingestion_tasks import analyze_rfp_task
-    task = analyze_rfp_task.delay(str(session.id))
-    logger.info(f"Dispatched analysis task {task.id} for session {session.id}")
-    return task.id
+    The frontend depends on this endpoint returning quickly so it can poll the
+    analysis endpoint. The actual model work runs in-process with its own DB
+    session, avoiding stale Celery queues while keeping the API responsive.
+    """
+    existing_result = await db.execute(
+        select(RFPAnalysis).where(RFPAnalysis.session_id == session.id)
+    )
+    regenerate = bool(existing_result.scalars().first())
+
+    session.status = "analyzing"
+    await db.commit()
+
+    task_id = _schedule_analysis_task(session.id, regenerate=regenerate)
+    logger.info(f"Scheduled background RFP analysis for session {session.id}")
+    return task_id
 
 
 async def get_analysis(db: AsyncSession, session_id: uuid.UUID) -> dict:
@@ -168,16 +269,29 @@ async def get_analysis(db: AsyncSession, session_id: uuid.UUID) -> dict:
     analysis = result.scalar_one_or_none()
     session = await get_session_or_404(db, session_id)
     if not analysis:
+        if _analysis_has_been_stuck(session):
+            analysis = await _run_and_store_analysis(db, session, regenerate=True)
+            await db.commit()
+            if analysis:
+                return {
+                    "session_id": str(session_id),
+                    "status": "analyzed",
+                    "analysis": sanitize_analysis_payload_for_leadership(analysis.to_dict()),
+                }
         return {
             "session_id": str(session_id),
             "status": session.status,
             "analysis": None,
         }
+    if session.status == "analyzing":
+        session.status = "analyzed"
+        await db.commit()
+        await db.refresh(session)
     analysis = await _recover_analysis_if_needed(db, analysis, session)
     return {
         "session_id": str(session_id),
         "status": "analyzed",
-        "analysis": analysis.to_dict(),
+        "analysis": sanitize_analysis_payload_for_leadership(analysis.to_dict()),
     }
 
 

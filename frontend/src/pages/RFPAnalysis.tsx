@@ -1,27 +1,43 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import {
   Activity,
   AlertTriangle,
-  ArrowRight,
-  Building,
-  CheckCircle,
-  Clock,
+  BookOpen,
+  CircuitBoard,
   Database,
   FileText,
   HelpCircle,
-  Info,
-  ListChecks,
-  RotateCw,
+  MessageSquare,
+  RefreshCw,
   ShieldAlert,
+  Swords,
   Target,
 } from 'lucide-react'
 import { rfpApi } from '@/api/endpoints'
 import { getErrorMessage } from '@/api/client'
-import type { ExecutiveInsight, ExecutiveIntelligence, ExecutiveReport, RFPAnalysis as RFPAnalysisType, RFPStatus } from '@/types'
+import type {
+  EvidenceItem,
+  MustAskQuestion,
+  RFPAnalysis as RFPAnalysisType,
+  RFPIntelligence,
+  RFPStatus,
+  TalkingPoint,
+} from '@/types'
+
+const tabs = [
+  'Must-Ask Questions',
+  'Top Risks',
+  'Talking Points',
+  'Narrative',
+  'Relevant Knowledge Evidence',
+  'Architecture',
+] as const
+
+type TabName = (typeof tabs)[number]
 
 function getStatusBadge(status: RFPStatus) {
   const labels: Record<RFPStatus, string> = {
@@ -29,8 +45,8 @@ function getStatusBadge(status: RFPStatus) {
     analyzing: 'Analyzing',
     analyzed: 'Analyzed',
     analysis_failed: 'Failed',
-    prep_generating: 'Generating Prep',
-    prep_ready: 'Prep Ready',
+    prep_generating: 'Generating',
+    prep_ready: 'Ready',
     war_room_running: 'War Room Active',
     war_room_done: 'War Room Complete',
     proposal_ready: 'Proposal Ready',
@@ -56,90 +72,95 @@ function cleanDisplayText(value: string) {
     .trim()
 }
 
-function usableItems(items?: string[]) {
-  const blocked = new Set([
-    'functional requirements',
-    'non-functional requirements',
-    'resource requirements',
-    'checklist of documents',
-    'documentation',
-    'system documentation',
-    'scope of work',
-  ])
-  return (items || [])
-    .map(cleanDisplayText)
-    .filter((item) => item.length > 14 && !blocked.has(item.toLowerCase()))
-    .slice(0, 8)
+function asText(value: unknown): string {
+  if (value === null || value === undefined) return ''
+  if (Array.isArray(value)) return value.map(asText).filter(Boolean).join(', ')
+  if (typeof value === 'object') return ''
+  return cleanDisplayText(String(value))
 }
 
-function InsightSection({
-  title,
-  icon,
-  items,
-  empty,
-  accent,
-}: {
-  title: string
-  icon: ReactNode
-  items?: string[]
-  empty: string
-  accent?: string
-}) {
-  const displayItems = usableItems(items)
+function fallbackIntelligence(analysis: RFPAnalysisType): RFPIntelligence {
+  return {
+    sentiment_analysis: {
+      overall_sentiment: 'Qualification needed',
+      summary:
+        analysis.business_problem ||
+        'The RFP needs source-grounded clarification before leadership commits scope, timeline, or commercial assumptions.',
+      confidence: 'medium',
+      points: [
+        {
+          title: 'Opportunity intent',
+          insight: analysis.business_problem || 'The RFP needs source-grounded clarification.',
+          evidence: analysis.functional_requirements?.[0] || analysis.business_problem || '',
+          implication: 'Validate the business outcome and success metric before discussing delivery commitment.',
+        },
+        {
+          title: 'Assumption load',
+          insight: 'Several assumptions need client confirmation before scope, price, timeline, and architecture are committed.',
+          evidence: analysis.missing_information?.slice(0, 2).join('; ') || '',
+          implication: 'Use the call to convert unknowns into assumptions, exclusions, dependencies, or discovery actions.',
+        },
+      ],
+      recommended_posture:
+        'Use the first client call to validate business outcomes, dependencies, acceptance criteria, and risk ownership.',
+    },
+    must_ask_questions:
+      analysis.missing_information.map((question) => ({
+        question,
+        why_it_matters: 'This affects delivery confidence, pricing, timeline, architecture, or acceptance risk.',
+        assumption_to_validate: 'The client can clarify this before proposal commitment.',
+      })),
+    top_risks: analysis.timeline_risks.map((risk) => ({ risk_title: risk })),
+    talking_points: [
+      { point: 'Confirm the business outcome and measurable success criteria.' },
+      { point: 'Validate client-owned data, integration, security, and approval dependencies.' },
+      { point: 'Separate mandatory first-release scope from optional or future-phase work.' },
+    ],
+    narrative: {
+      title: 'Evidence-led client narrative',
+      story:
+        'No relevant internal project evidence was attached to this analysis yet. Keep the client narrative grounded in RFP facts until a verified project match is available.',
+      confidence: 'low',
+    },
+    relevant_knowledge_evidence: [],
+    architecture: {
+      summary: 'Use a modular architecture based on confirmed RFP scope, integrations, data, security, and operating requirements.',
+      components: ['Client channels / user interface', 'Application workflow services', 'Data layer', 'Integration/API adapter layer', 'Security and audit logging', 'Monitoring and operations'],
+      assumptions: ['Final design depends on confirmed source systems, hosting model, security controls, and acceptance criteria.'],
+      business_view: ['Confirm the operating outcome, owner, success metric, and acceptance authority before finalizing the design.'],
+      technical_view: ['Separate user experience, workflow services, integration adapters, data responsibilities, controls, and observability.'],
+      decision_points: ['Validate integration readiness, data ownership, control evidence, release scope, and support responsibilities before pricing.'],
+      call_prep_questions: ['Which owner can confirm the success metric, source systems, security gates, and acceptance evidence?'],
+    },
+  }
+}
+
+function hasUsableIntelligence(value?: RFPIntelligence) {
+  return !!(
+    value?.sentiment_analysis?.summary ||
+    value?.sentiment_analysis?.points?.length ||
+    value?.must_ask_questions?.length ||
+    value?.top_risks?.length ||
+    value?.talking_points?.length ||
+    value?.architecture?.components?.length
+  )
+}
+
+function SectionCard({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
   return (
     <div className="insight-card">
-      <h3 className="section-title" style={accent ? { color: accent } : undefined}>
+      <h3 className="section-title">
         {icon}
         {title}
-        <span className="badge badge-uploaded" style={{ marginLeft: 'auto' }}>
-          {displayItems.length}
-        </span>
       </h3>
-      {displayItems.length > 0 ? (
-        <ul className="clean-list">
-          {displayItems.map((item, index) => (
-            <li key={`${title}-${index}`}>{item}</li>
-          ))}
-        </ul>
-      ) : (
-        <p className="readable-text" style={{ color: 'var(--color-text-muted)' }}>
-          {empty}
-        </p>
-      )}
+      {children}
     </div>
   )
 }
 
-function sourceLabel(source: string) {
-  const labels: Record<string, string> = {
-    explicit_in_rfp: 'Explicit in RFP',
-    inferred_from_rfp: 'Inferred from RFP',
-    derived_from_industry_knowledge: 'Industry pattern',
-  }
-  return labels[source] || source.replaceAll('_', ' ')
-}
-
-function ExecutiveInsightCard({ item }: { item: ExecutiveInsight }) {
-  return (
-    <div className="match-card">
-      <div className="flex justify-between items-center gap-3" style={{ marginBottom: '0.65rem' }}>
-        <h4 style={{ margin: 0 }}>{item.title}</h4>
-        <span className="badge badge-analyzed">{Math.round((item.confidence || 0) * 100)}%</span>
-      </div>
-      <p className="readable-text" style={{ color: 'var(--color-text-primary)' }}>{item.insight}</p>
-      <p style={{ color: 'var(--color-text-muted)', fontSize: '0.86rem', marginTop: '0.75rem' }}>
-        <strong>{sourceLabel(item.source)}:</strong> {cleanDisplayText(item.evidence || 'Evidence not available.')}
-      </p>
-      <p style={{ color: 'var(--color-primary-light)', fontSize: '0.9rem', marginTop: '0.75rem', lineHeight: 1.55 }}>
-        {item.recommendation}
-      </p>
-    </div>
-  )
-}
-
-function StrategicList({ items, empty }: { items?: string[]; empty: string }) {
+function TextList({ items, empty }: { items?: string[]; empty: string }) {
   const displayItems = (items || []).map(cleanDisplayText).filter(Boolean)
-  if (displayItems.length === 0) {
+  if (!displayItems.length) {
     return <p className="readable-text" style={{ color: 'var(--color-text-muted)' }}>{empty}</p>
   }
   return (
@@ -151,74 +172,40 @@ function StrategicList({ items, empty }: { items?: string[]; empty: string }) {
   )
 }
 
-function asText(value: unknown): string {
-  if (value === null || value === undefined) return ''
-  if (Array.isArray(value)) return value.map(asText).filter(Boolean).join(', ')
-  if (typeof value === 'object') return ''
-  return String(value)
-}
-
-function asTextArray(value: unknown): string[] {
-  if (!value) return []
-  if (Array.isArray(value)) return value.map(asText).filter(Boolean)
-  return [asText(value)].filter(Boolean)
-}
-
-function KeyValueGrid({ data, skip = [] }: { data?: Record<string, unknown>; skip?: string[] }) {
-  const entries = Object.entries(data || {}).filter(([key, value]) => !skip.includes(key) && asText(value))
-  if (entries.length === 0) return null
-  return (
-    <div className="grid-2" style={{ gap: '0.75rem' }}>
-      {entries.map(([key, value]) => (
-        <div className="match-card" key={key}>
-          <span style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem', textTransform: 'uppercase' }}>
-            {key.replaceAll('_', ' ')}
-          </span>
-          <p className="readable-text" style={{ marginTop: '0.35rem' }}>{asText(value)}</p>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function RequirementCards({ items }: { items?: Array<Record<string, unknown>> }) {
-  if (!items?.length) return <p className="readable-text">No solution requirements were normalized.</p>
+function QuestionCards({ questions }: { questions?: MustAskQuestion[] }) {
+  if (!questions?.length) return <p className="readable-text">No clarification questions were generated.</p>
   return (
     <div className="content-stack">
-      {items.map((item, index) => (
-        <div className="match-card" key={`${asText(item.requirement_name)}-${index}`}>
+      {questions.map((item, index) => (
+        <div className="match-card" key={`${item.question}-${index}`}>
           <div className="flex justify-between items-center gap-3" style={{ marginBottom: '0.5rem' }}>
-            <h4 style={{ margin: 0 }}>{asText(item.requirement_name) || 'Requirement'}</h4>
-            <span className="badge badge-analyzed">{asText(item.category) || 'Scope'}</span>
+            <h4 style={{ margin: 0 }}>{item.question}</h4>
+            {item.category ? <span className="badge badge-analyzed">{item.category}</span> : null}
           </div>
-          <p className="readable-text" style={{ color: 'var(--color-text-primary)' }}>{asText(item.description)}</p>
-          <p style={{ color: 'var(--color-primary-light)', fontSize: '0.88rem', marginTop: '0.65rem' }}>
-            <strong>Priority:</strong> {asText(item.priority) || 'Medium'} · <strong>Confidence:</strong> {asText(item.confidence) || 'medium'}
-          </p>
-          <p style={{ color: 'var(--color-text-muted)', fontSize: '0.86rem', marginTop: '0.65rem' }}>
-            <strong>Evidence:</strong> {cleanDisplayText(asText(item.evidence) || 'Evidence not available.')}
-          </p>
-          <p className="readable-text" style={{ marginTop: '0.65rem' }}>{asText(item.interpretation)}</p>
+          {item.why_it_matters ? <p className="readable-text"><strong>Why it matters:</strong> {item.why_it_matters}</p> : null}
+          {item.assumption_to_validate ? (
+            <p className="readable-text"><strong>Assumption:</strong> {item.assumption_to_validate}</p>
+          ) : null}
         </div>
       ))}
     </div>
   )
 }
 
-function RiskCards({ items }: { items?: Array<Record<string, unknown>> }) {
-  if (!items?.length) return <p className="readable-text">No executive risks were generated.</p>
+function RiskCards({ risks }: { risks?: Array<Record<string, unknown>> }) {
+  if (!risks?.length) return <p className="readable-text">No risk assessment was generated.</p>
   return (
     <div className="content-stack">
-      {items.map((item, index) => (
-        <div className="match-card" key={`${asText(item.risk_title)}-${index}`}>
+      {risks.map((item, index) => (
+        <div className="match-card" key={`${asText(item.risk_title) || asText(item.risk_name)}-${index}`}>
           <div className="flex justify-between items-center gap-3" style={{ marginBottom: '0.5rem' }}>
-            <h4 style={{ margin: 0 }}>{asText(item.risk_title) || 'Risk'}</h4>
+            <h4 style={{ margin: 0 }}>{asText(item.risk_title) || asText(item.risk_name) || asText(item.risk) || 'Risk'}</h4>
             <span className="badge badge-danger">{asText(item.severity) || 'Medium'}</span>
           </div>
-          <p className="readable-text"><strong>Impact:</strong> {asText(item.impact)}</p>
-          <p className="readable-text"><strong>Mitigation:</strong> {asText(item.mitigation)}</p>
+          {asText(item.impact) ? <p className="readable-text"><strong>Impact:</strong> {asText(item.impact)}</p> : null}
+          {asText(item.mitigation) ? <p className="readable-text"><strong>Mitigation:</strong> {asText(item.mitigation)}</p> : null}
           <p style={{ color: 'var(--color-text-muted)', fontSize: '0.86rem', marginTop: '0.5rem' }}>
-            Probability: {asText(item.probability) || 'Medium'} · Owner: {asText(item.owner) || 'Joint'}
+            Probability: {asText(item.probability) || 'Medium'} | Owner: {asText(item.owner) || 'Joint'}
           </p>
         </div>
       ))}
@@ -226,342 +213,164 @@ function RiskCards({ items }: { items?: Array<Record<string, unknown>> }) {
   )
 }
 
-function ExecutiveReportView({ report, analysis }: { report: ExecutiveReport; analysis: RFPAnalysisType }) {
-  const tabs = [
-    'Leadership Snapshot',
-    'CEO Brief',
-    'Bid Decision',
-    'Top Risks',
-    'Must-Ask Questions',
-    'Win Strategy',
-    'Delivery Plan',
-    'Architecture',
-    'Commercial View',
-    'Past Expertise',
-    'Clean Scope',
-    'Business Problem',
-    'Excluded Tender/Admin Noise',
-    'Competitor Strategy',
-    'Prospect Call Prep',
-    'Proposal Outline',
-    'Quality Checks',
-    'Debug / Source Extraction',
-  ]
-  const [activeTab, setActiveTab] = useState(tabs[0])
-  const [debugExpanded, setDebugExpanded] = useState(false)
-  const bid = report.bid_recommendation || {}
-  const scoreBreakdown = bid.score_breakdown || {}
-  const callPrep = report.prospect_call_prep || {}
-  const snapshot = report.leadership_snapshot || {}
-  const qualityChecks = report.quality_checks || {}
-  const leadershipReady = snapshot.leadership_ready !== false && qualityChecks.leadership_ready !== false
-  const leadershipWarning = asText(snapshot.warning) || asText(qualityChecks.warning)
-
+function TalkingPointCards({ points }: { points?: TalkingPoint[] }) {
+  if (!points?.length) return <p className="readable-text">No talking points were generated.</p>
   return (
     <div className="content-stack">
-      <div className="card-elevated">
-        <div className="prep-summary">
-          <div>
-            <h3 className="section-title">
-              <Info size={20} color="var(--color-primary-light)" />
-              Leadership Snapshot
-            </h3>
-            <p className="readable-text" style={{ color: 'var(--color-text-primary)' }}>
-              {asText(snapshot.one_line_opportunity) || report.ceo_brief}
-            </p>
+      {points.map((item, index) => (
+        <div className="match-card" key={`${item.point}-${index}`}>
+          <h4>{item.point}</h4>
+          {item.client_angle ? <p className="readable-text"><strong>Client angle:</strong> {item.client_angle}</p> : null}
+          {item.proof_needed ? <p className="readable-text"><strong>Proof needed:</strong> {item.proof_needed}</p> : null}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function EvidenceCards({ evidence }: { evidence?: EvidenceItem[] }) {
+  if (!evidence?.length) {
+    return (
+      <p className="readable-text">
+        No relevant knowledge-base evidence was retrieved. Seed or ingest internal case studies, architecture docs, and project writeups to improve this section.
+      </p>
+    )
+  }
+  return (
+    <div className="content-stack">
+      {evidence.map((item, index) => (
+        <div className="match-card" key={`${item.title}-${index}`}>
+          <div className="flex justify-between items-center gap-3" style={{ marginBottom: '0.5rem' }}>
+            <h4 style={{ margin: 0 }}>{item.title}</h4>
+            <span className="badge badge-analyzed">{Math.round((item.score || 0) * 100)}%</span>
           </div>
-          <div className="side-stack">
-            <div className="insight-card" style={{ padding: '0.9rem' }}>
-              <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>
-                Bid decision
-              </span>
-              <strong style={{ display: 'block', marginTop: '0.35rem' }}>{bid.decision || 'Qualification needed'}</strong>
-              <p style={{ color: 'var(--color-primary-light)', marginTop: '0.35rem' }}>
-                Score: {String(bid.overall_score ?? 'N/A')}/100
-              </p>
-            </div>
-            <ExtractionQuality analysis={analysis} />
-          </div>
-        </div>
-      </div>
-
-      {!leadershipReady || leadershipWarning ? (
-        <div className="insight-card" style={{ borderColor: 'var(--color-warning)' }}>
-          <h3 className="section-title" style={{ color: 'var(--color-warning)' }}>
-            <AlertTriangle size={20} />
-            Leadership Readiness Warning
-          </h3>
-          <p className="readable-text">
-            {leadershipWarning || 'This report needs review before being used as a leadership-facing brief.'}
-          </p>
-        </div>
-      ) : null}
-
-      <div className="insight-card" style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto', padding: '0.65rem' }}>
-        {tabs.map((tab) => (
-          <button
-            key={tab}
-            className={`btn ${activeTab === tab ? 'btn-primary' : 'btn-secondary'}`}
-            style={{ whiteSpace: 'nowrap', padding: '0.55rem 0.75rem' }}
-            onClick={() => setActiveTab(tab)}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>
-
-      {activeTab === 'Leadership Snapshot' && (
-        <div className="content-stack">
-          <div className="insight-card">
-            <h3 className="section-title"><Target size={20} /> Leadership Snapshot</h3>
-            <KeyValueGrid
-              data={{
-                recommendation: snapshot.recommendation || bid.decision,
-                overall_score: snapshot.overall_score ?? bid.overall_score,
-                one_line_opportunity: snapshot.one_line_opportunity || report.ceo_brief,
-                confidence: snapshot.confidence,
-              }}
-            />
-          </div>
-          <div className="prep-two-column">
-            <InsightSection
-              title="Top Reasons To Bid"
-              icon={<CheckCircle size={18} />}
-              items={asTextArray(snapshot.top_3_reasons_to_bid)}
-              empty="No bid reasons generated."
-            />
-            <InsightSection
-              title="Top Risks"
-              icon={<ShieldAlert size={18} />}
-              items={
-                asTextArray(snapshot.top_3_risks).length
-                  ? asTextArray(snapshot.top_3_risks)
-                  : (report.risk_assessment || []).map((risk) => asText(risk.risk_name) || asText(risk.risk))
-              }
-              empty="No top risks generated."
-            />
-          </div>
-          <InsightSection
-            title="Top Questions For Client Call"
-            icon={<HelpCircle size={18} />}
-            items={
-              asTextArray(snapshot.top_5_questions_for_client_call).length
-                ? asTextArray(snapshot.top_5_questions_for_client_call)
-                : (report.missing_information || []).flatMap((group) => group.questions || []).slice(0, 5)
-            }
-            empty="No client questions generated."
-          />
-        </div>
-      )}
-
-      {activeTab === 'CEO Brief' && (
-        <div className="prep-two-column">
-          <div className="insight-card">
-            <h3 className="section-title"><Info size={20} /> Executive Summary</h3>
-            <p className="readable-text" style={{ color: 'var(--color-text-primary)' }}>{report.ceo_brief}</p>
-          </div>
-          <div className="insight-card">
-            <h3 className="section-title"><Target size={20} /> Domain Signals</h3>
-            <StrategicList items={analysis.domain_tags} empty="No domain tags generated." />
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'Bid Decision' && (
-        <div className="content-stack">
-          <div className="insight-card">
-            <h3 className="section-title"><Target size={20} /> {bid.decision || 'Bid Recommendation'}</h3>
-            <p className="readable-text">{asText(bid.rationale)}</p>
-          </div>
-          <KeyValueGrid data={scoreBreakdown} />
-        </div>
-      )}
-
-      {activeTab === 'Business Problem' && (
-        <div className="insight-card">
-          <h3 className="section-title"><Building size={20} /> Business Problem Intelligence</h3>
-          <KeyValueGrid data={report.business_problem} />
-        </div>
-      )}
-
-      {activeTab === 'Clean Scope' && (
-        <div className="insight-card">
-          <h3 className="section-title"><ListChecks size={20} /> Clean Solution Scope</h3>
-          <RequirementCards items={report.solution_scope} />
-        </div>
-      )}
-
-      {activeTab === 'Must-Ask Questions' && (
-        <div className="prep-two-column">
-          {(report.missing_information || []).map((group) => (
-            <div className="insight-card" key={group.category}>
-              <h3 className="section-title"><HelpCircle size={20} /> {group.category}</h3>
-              <StrategicList items={group.questions} empty="No questions generated." />
-            </div>
-          ))}
-        </div>
-      )}
-
-      {activeTab === 'Top Risks' && (
-        <div className="insight-card">
-          <h3 className="section-title"><ShieldAlert size={20} /> Risk Assessment</h3>
-          <RiskCards items={report.risk_assessment} />
-        </div>
-      )}
-
-      {activeTab === 'Delivery Plan' && (
-        <div className="insight-card">
-          <h3 className="section-title"><Clock size={20} /> Delivery Complexity</h3>
-          <KeyValueGrid data={report.delivery_complexity} />
-        </div>
-      )}
-
-      {activeTab === 'Architecture' && (
-        <div className="insight-card">
-          <h3 className="section-title"><Database size={20} /> Architecture Recommendation</h3>
-          <KeyValueGrid data={report.architecture_recommendation} />
-        </div>
-      )}
-
-      {activeTab === 'Commercial View' && (
-        <div className="insight-card">
-          <h3 className="section-title"><Activity size={20} /> Commercial View</h3>
-          <KeyValueGrid data={report.commercial_intelligence} />
-        </div>
-      )}
-
-      {activeTab === 'Excluded Tender/Admin Noise' && (
-        <div className="content-stack">
-          <div className="insight-card">
-            <h3 className="section-title"><AlertTriangle size={20} /> Excluded Tender/Admin Noise</h3>
-            <p className="readable-text">
-              Procurement/legal/admin fragments are kept out of leadership-facing scope, risks, and data needs.
-            </p>
-            <KeyValueGrid data={report.excluded_noise_summary} />
-          </div>
-          <div className="prep-two-column">
-            {(report.excluded_noise || []).map((item, index) => (
-              <div className="match-card" key={`${asText(item.category)}-${index}`}>
-                <h4>{asText(item.category) || 'Excluded item'}</h4>
-                <p className="readable-text">{asText(item.text) || asText(item.reason)}</p>
-              </div>
+          <p className="readable-text">{item.why_relevant}</p>
+          <div className="flex gap-2" style={{ marginTop: '0.75rem', flexWrap: 'wrap' }}>
+            {[...(item.tech_stack || []), ...(item.tags || [])].slice(0, 10).map((tag) => (
+              <span className="badge badge-uploaded" key={tag}>{tag}</span>
             ))}
           </div>
         </div>
-      )}
-
-      {activeTab === 'Competitor Strategy' && (
-        <div className="content-stack">
-          {(report.competitor_intelligence || []).map((item, index) => (
-            <div className="match-card" key={`${asText(item.competitor_category)}-${index}`}>
-              <h4>{asText(item.competitor_category)}</h4>
-              <KeyValueGrid data={item} skip={['competitor_category']} />
-            </div>
-          ))}
-        </div>
-      )}
-
-      {activeTab === 'Win Strategy' && (
-        <div className="insight-card">
-          <h3 className="section-title"><CheckCircle size={20} /> Win Strategy</h3>
-          <StrategicList items={report.win_strategy} empty="No win strategy generated." />
-        </div>
-      )}
-
-      {activeTab === 'Prospect Call Prep' && (
-        <div className="content-stack">
-          <div className="insight-card">
-            <h3 className="section-title"><Target size={20} /> 30-second Opening</h3>
-            <p className="readable-text">{asText(callPrep.opening_narrative_30_seconds)}</p>
-          </div>
-          <div className="prep-two-column">
-            <InsightSection title="Strongest Talking Points" icon={<CheckCircle size={18} />} items={asTextArray(callPrep.strongest_talking_points)} empty="No talking points." />
-            <InsightSection title="Avoid Overcommitting" icon={<AlertTriangle size={18} />} items={asTextArray(callPrep.avoid_overcommitting_on)} empty="No guardrails." />
-          </div>
-          <div className="prep-two-column">
-            <InsightSection title="Technical Questions" icon={<Database size={18} />} items={asTextArray(callPrep.technical_questions)} empty="No technical questions." />
-            <InsightSection title="Commercial Questions" icon={<Activity size={18} />} items={asTextArray(callPrep.commercial_questions)} empty="No commercial questions." />
-          </div>
-          <div className="prep-two-column">
-            <InsightSection title="Risk Questions" icon={<ShieldAlert size={18} />} items={asTextArray(callPrep.risk_questions)} empty="No risk questions." />
-            <InsightSection title="Assumptions to Validate" icon={<HelpCircle size={18} />} items={asTextArray(callPrep.assumptions_to_validate)} empty="No assumptions." />
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'Proposal Outline' && (
-        <div className="insight-card">
-          <h3 className="section-title"><FileText size={20} /> Proposal Outline</h3>
-          <StrategicList items={report.proposal_outline} empty="No proposal outline." />
-        </div>
-      )}
-
-      {activeTab === 'Quality Checks' && (
-        <div className="prep-two-column">
-          <div className="insight-card">
-            <h3 className="section-title"><CheckCircle size={20} /> Quality Checks</h3>
-            <KeyValueGrid data={(report.quality_checks?.checks || {}) as Record<string, unknown>} />
-          </div>
-          <div className="insight-card">
-            <h3 className="section-title"><Info size={20} /> Quality Summary</h3>
-            <KeyValueGrid data={report.quality_checks} skip={['checks']} />
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'Past Expertise' && (
-        <div className="insight-card">
-          <h3 className="section-title"><Building size={20} /> Past Expertise Match</h3>
-          <KeyValueGrid data={report.past_expertise_match} />
-        </div>
-      )}
-
-      {activeTab === 'Debug / Source Extraction' && (
-        <div className="content-stack">
-          <div className="insight-card">
-            <h3 className="section-title"><FileText size={20} /> Debug / Source Extraction</h3>
-            <p className="readable-text">Raw extraction is internal debugging evidence, not the leadership-facing report.</p>
-            <button className="btn btn-secondary" style={{ marginTop: '0.8rem' }} onClick={() => setDebugExpanded((value) => !value)}>
-              {debugExpanded ? 'Hide Debug Extraction' : 'Show Debug Extraction'}
-            </button>
-          </div>
-          {debugExpanded ? (
-            <>
-              <div className="prep-two-column">
-                <InsightSection title="Legacy Functional Requirements" icon={<ListChecks size={18} />} items={analysis.functional_requirements} empty="No functional requirements." />
-                <InsightSection title="Excluded Noise" icon={<AlertTriangle size={18} />} items={(report.excluded_noise || []).map((item) => `${asText(item.category)}: ${asText(item.text)}`)} empty="No excluded noise captured." />
-              </div>
-              <div className="prep-two-column">
-                <InsightSection title="Integration/Data Signals" icon={<Database size={18} />} items={[...(analysis.integration_needs || []), ...(analysis.data_needs || [])]} empty="No integration or data signals." />
-                <InsightSection title="Missing Information" icon={<HelpCircle size={18} />} items={analysis.missing_information} empty="No missing information." />
-              </div>
-            </>
-          ) : null}
-        </div>
-      )}
+      ))}
     </div>
   )
 }
 
-function ExtractionQuality({ analysis }: { analysis: RFPAnalysisType }) {
-  const meta = analysis.raw_llm_output?.extraction_meta
-  const mode = meta?.mode === 'llm_structured' ? 'LLM structured extraction' : 'Source-grounded fallback'
-  const confidence = typeof meta?.confidence === 'number' ? `${Math.round(meta.confidence * 100)}%` : 'Reviewed'
-
+function ArchitectureFlow({ architecture }: { architecture?: RFPIntelligence['architecture'] }) {
+  const nodes = (architecture?.components || []).filter(Boolean).slice(0, 10)
+  if (!nodes.length) return null
   return (
-    <div className="insight-card" style={{ padding: '0.9rem' }}>
-      <span style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem', textTransform: 'uppercase' }}>
-        Extraction quality
-      </span>
-      <p style={{ color: 'var(--color-success)', fontWeight: 700, marginTop: '0.35rem' }}>
-        {mode}
-      </p>
-      <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.86rem', marginTop: '0.35rem' }}>
-        Confidence: {confidence}. Outputs are constrained to RFP text and marked gaps.
-      </p>
-      <p style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem', marginTop: '0.5rem' }}>
-        Sensitive RFP data is not stored in browser state beyond this session view.
-      </p>
+    <div>
+      <h4 className="section-title" style={{ marginTop: 0 }}>
+        <CircuitBoard size={18} />
+        Architecture Flow
+      </h4>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.55rem' }}>
+        {nodes.map((node, index) => (
+          <div key={`${node}-${index}`} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
+            <div
+              style={{
+                width: 'min(100%, 760px)',
+                border: '1px solid var(--color-border)',
+                borderRadius: 'var(--radius-md)',
+                background: 'rgba(96, 165, 250, 0.08)',
+                padding: '0.85rem 1rem',
+                textAlign: 'center',
+                fontWeight: 700,
+                color: 'var(--color-text-primary)',
+              }}
+            >
+              {node}
+            </div>
+            {index < nodes.length - 1 ? (
+              <div style={{ color: 'var(--color-primary-light)', fontSize: '1.4rem', lineHeight: 1.15, padding: '0.15rem 0' }}>&darr;</div>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function SentimentPointCards({ points }: { points?: NonNullable<RFPIntelligence['sentiment_analysis']>['points'] }) {
+  if (!points?.length) return <p className="readable-text">No point-wise sentiment analysis was generated.</p>
+  return (
+    <div className="content-stack" style={{ marginTop: '1rem' }}>
+      {points.map((item, index) => (
+        <div className="match-card" key={`${item.title || 'point'}-${index}`}>
+          <h4>{item.title || 'RFP insight'}</h4>
+          {item.insight ? <p className="readable-text">{item.insight}</p> : null}
+          {item.evidence ? (
+            <p style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem', marginTop: '0.65rem' }}>
+              <strong>Evidence:</strong> {item.evidence}
+            </p>
+          ) : null}
+          {item.implication ? (
+            <p style={{ color: 'var(--color-primary-light)', fontSize: '0.92rem', marginTop: '0.65rem', lineHeight: 1.55 }}>
+              <strong>Implication:</strong> {item.implication}
+            </p>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ArchitectureView({ architecture }: { architecture?: RFPIntelligence['architecture'] }) {
+  if (!architecture) return <p className="readable-text">No architecture recommendation was generated.</p>
+  const hasDetails = Boolean(
+    architecture.business_view?.length ||
+    architecture.technical_view?.length ||
+    architecture.data_flow?.length ||
+    architecture.integration_flow?.length ||
+    architecture.security_operations?.length ||
+    architecture.decision_points?.length ||
+    architecture.call_prep_questions?.length
+  )
+  return (
+    <div className="content-stack">
+      {architecture.summary ? <p className="readable-text">{architecture.summary}</p> : null}
+      <ArchitectureFlow architecture={architecture} />
+      {hasDetails ? (
+        <>
+          <ArchitectureSubsection title="Business View" items={architecture.business_view} empty="No business architecture view generated." />
+          <ArchitectureSubsection title="Technical Blueprint" items={architecture.technical_view} empty="No technical blueprint generated." />
+          <div className="prep-two-column">
+            <ArchitectureSubsection title="Data Flow" items={architecture.data_flow} empty="No data flow generated." />
+            <ArchitectureSubsection title="Integration Flow" items={architecture.integration_flow} empty="No integration flow generated." />
+          </div>
+          <ArchitectureSubsection title="Security and Operations" items={architecture.security_operations} empty="No security or operations detail generated." />
+          <div className="prep-two-column">
+            <ArchitectureSubsection title="Decision Points" items={architecture.decision_points} empty="No design decisions generated." />
+            <ArchitectureSubsection title="Call Prep Questions" items={architecture.call_prep_questions} empty="No architecture call questions generated." />
+          </div>
+        </>
+      ) : null}
+      <div className="prep-two-column">
+        <div>
+          <h4 className="section-title">
+            <Database size={18} />
+            Components
+          </h4>
+          <TextList items={architecture.components} empty="No components generated." />
+        </div>
+        <div>
+          <h4 className="section-title">
+            <HelpCircle size={18} />
+            Assumptions
+          </h4>
+          <TextList items={architecture.assumptions} empty="No assumptions generated." />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ArchitectureSubsection({ title, items, empty }: { title: string; items?: string[]; empty: string }) {
+  return (
+    <div>
+      <h4 style={{ marginBottom: '0.65rem' }}>{title}</h4>
+      <TextList items={items} empty={empty} />
     </div>
   )
 }
@@ -569,7 +378,9 @@ function ExtractionQuality({ analysis }: { analysis: RFPAnalysisType }) {
 export function RFPAnalysis() {
   const { sessionId } = useParams<{ sessionId: string }>()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [loadingStep, setLoadingStep] = useState(0)
+  const [activeTab, setActiveTab] = useState<TabName>('Must-Ask Questions')
   const analysisTriggeredRef = useRef<string | null>(null)
 
   const {
@@ -589,9 +400,13 @@ export function RFPAnalysis() {
 
   const { mutate: startAnalysis, isPending: isStartingAnalysis } = useMutation({
     mutationFn: () => rfpApi.triggerAnalysis(sessionId!),
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success('RFP analysis started.')
-      refetchSession()
+      await queryClient.invalidateQueries({ queryKey: ['rfpAnalysis', sessionId] })
+      await Promise.all([
+        refetchSession(),
+        queryClient.refetchQueries({ queryKey: ['rfpAnalysis', sessionId] }),
+      ])
     },
     onError: (err) => toast.error('Failed to start analysis: ' + getErrorMessage(err)),
   })
@@ -616,19 +431,36 @@ export function RFPAnalysis() {
     return () => clearInterval(interval)
   }, [session?.status])
 
-  const isAnalyzed =
-    session &&
-    session.status !== 'uploaded' &&
-    session.status !== 'analyzing' &&
+  const shouldFetchAnalysis =
+    !!session &&
     session.status !== 'analysis_failed'
 
   const { data: analysisResponse, isLoading: isAnalysisLoading } = useQuery({
-    queryKey: ['rfpAnalysis', sessionId],
+    queryKey: ['rfpAnalysis', sessionId, session?.updated_at],
     queryFn: () => rfpApi.getAnalysis(sessionId!),
-    enabled: !!sessionId && !!isAnalyzed,
+    enabled: !!sessionId && shouldFetchAnalysis,
+    refetchInterval: (query) => {
+      const hasAnalysis = !!query.state.data?.analysis
+      return (session?.status === 'uploaded' || session?.status === 'analyzing') && !hasAnalysis ? 3000 : false
+    },
   })
 
   const analysis = analysisResponse?.analysis
+  const intelligence = useMemo(() => {
+    if (!analysis) return undefined
+    const generated = analysis.raw_llm_output?.rfp_intelligence
+    return hasUsableIntelligence(generated) ? generated : fallbackIntelligence(analysis)
+  }, [analysis])
+  const extractionMeta = analysis?.raw_llm_output?.extraction_meta
+  const isFallbackAnalysis =
+    extractionMeta?.mode === 'deterministic_source_text' ||
+    extractionMeta?.warnings?.some((warning) => warning.toLowerCase().includes('llm'))
+
+  useEffect(() => {
+    if (analysis && session?.status === 'analyzing') {
+      refetchSession()
+    }
+  }, [analysis, session?.status, refetchSession])
 
   if (isSessionLoading) {
     return (
@@ -647,30 +479,28 @@ export function RFPAnalysis() {
         <p style={{ marginBottom: '1.5rem' }}>
           {sessionError ? getErrorMessage(sessionError) : 'The requested RFP session was not found.'}
         </p>
-        <button className="btn btn-primary" onClick={() => navigate('/dashboard')}>
-          Back to Dashboard
-        </button>
+        <button className="btn btn-primary" onClick={() => navigate('/dashboard')}>Back to Dashboard</button>
       </div>
     )
   }
 
-  if (session.status === 'uploaded' || session.status === 'analyzing') {
+  if ((session.status === 'uploaded' || session.status === 'analyzing') && !analysis) {
     const steps = [
-      'Parsing document text and removing table-of-contents noise...',
-      'Extracting delivery requirements and tender constraints...',
-      'Separating technical scope from commercial/compliance obligations...',
-      'Preparing grounded analysis for the prep pack...',
+      'Parsing document text and removing tender boilerplate...',
+      'Extracting source-grounded requirements, gaps, and risks...',
+      'Retrieving relevant internal knowledge evidence...',
+      'Building executive call strategy and architecture...',
     ]
 
     return (
-      <div className="flex flex-col items-center justify-center text-center fade-in" style={{ minHeight: '60vh', maxWidth: 620, margin: '0 auto' }}>
+      <div className="flex flex-col items-center justify-center text-center fade-in" style={{ minHeight: '60vh', maxWidth: 660, margin: '0 auto' }}>
         <div className="spinner" style={{ width: 56, height: 56, borderWidth: 4, marginBottom: '1.5rem' }} />
         <h2 style={{ marginBottom: '0.75rem' }}>Analyzing RFP Document</h2>
         <p style={{ color: 'var(--color-primary-light)', fontWeight: 600, marginBottom: '1.5rem', minHeight: 24 }}>
           {steps[loadingStep]}
         </p>
         <p className="readable-text">
-          ProposalPilot extracts only source-grounded requirements, risks, compliance obligations, integrations, and missing information. Sensitive RFP content stays within your configured local backend and services.
+          ProposalPilot is preparing one leadership-ready analysis page with sentiment, assumptions, risks, talking points, evidence, and architecture.
         </p>
       </div>
     )
@@ -686,20 +516,13 @@ export function RFPAnalysis() {
         </p>
         <div className="flex justify-center gap-4">
           <button className="btn btn-secondary" onClick={() => navigate('/dashboard')}>Back</button>
-          <button className="btn btn-primary" onClick={() => startAnalysis()}>
-            <RotateCw size={16} />
+          <button className="btn btn-primary" onClick={() => startAnalysis()} disabled={isStartingAnalysis}>
+            <RefreshCw size={16} />
             Retry Analysis
           </button>
         </div>
       </div>
     )
-  }
-
-  const complexityColors: Record<string, string> = {
-    low: 'var(--color-success)',
-    medium: 'var(--color-info)',
-    high: 'var(--color-warning)',
-    very_high: 'var(--color-error)',
   }
 
   return (
@@ -713,234 +536,102 @@ export function RFPAnalysis() {
           </div>
           <p className="page-subtitle">
             Client: <strong style={{ color: 'var(--color-text-primary)' }}>{session.client_name || 'N/A'}</strong>
-            <span style={{ margin: '0 0.75rem' }}>·</span>
+            <span style={{ margin: '0 0.75rem' }}>|</span>
             File: <strong style={{ color: 'var(--color-text-primary)' }}>{session.original_filename}</strong>
           </p>
         </div>
         <div className="flex items-center gap-3">
           <button className="btn btn-secondary" onClick={() => navigate('/dashboard')}>Back</button>
-          <button
-            className="btn btn-secondary"
-            onClick={() => startAnalysis()}
-            disabled={isStartingAnalysis}
-          >
-            <RotateCw size={16} />
-            Re-analyze
+          <button className="btn btn-secondary" onClick={() => startAnalysis()} disabled={isStartingAnalysis}>
+            {isStartingAnalysis ? <div className="spinner" style={{ width: 14, height: 14 }} /> : <RefreshCw size={16} />}
+            Regenerate
           </button>
-          <button
-            className="btn btn-primary"
-            onClick={() => navigate(`/rfp/${sessionId}/prep-pack`)}
-            disabled={isAnalysisLoading || !analysis}
-          >
-            Generate Prep Pack
-            <ArrowRight size={16} />
+          <button className="btn btn-primary" onClick={() => navigate(`/rfp/${sessionId}/war-room`)} disabled={isAnalysisLoading || !analysis}>
+            <Swords size={16} />
+            Open War Room
           </button>
         </div>
       </div>
 
-      {isAnalysisLoading || !analysis ? (
+      {isAnalysisLoading || !analysis || !intelligence ? (
         <div className="flex flex-col items-center justify-center" style={{ minHeight: '30vh' }}>
           <div className="spinner" style={{ width: 32, height: 32, borderWidth: 2, marginBottom: '1rem' }} />
           <p>Retrieving extracted insights...</p>
         </div>
       ) : (
         <div className="content-stack">
-          {(() => {
-            const report = analysis.raw_llm_output?.executive_report as ExecutiveReport | undefined
-            if (report?.ceo_brief) {
-              return <ExecutiveReportView report={report} analysis={analysis as RFPAnalysisType} />
-            }
-
-            const intelligence = analysis.raw_llm_output?.executive_intelligence as ExecutiveIntelligence | undefined
-            const hasIntelligence = !!intelligence?.executive_summary
-
-            if (!hasIntelligence) {
-              return null
-            }
-
-            return (
-              <>
-                <div className="card-elevated">
-                  <div className="prep-summary">
-                    <div>
-                      <h3 className="section-title">
-                        <Info size={20} color="var(--color-primary-light)" />
-                        Executive Intelligence Brief
-                      </h3>
-                      <p className="readable-text" style={{ color: 'var(--color-text-primary)' }}>
-                        {intelligence.executive_summary}
-                      </p>
-                    </div>
-                    <div className="side-stack">
-                      <div className="insight-card" style={{ padding: '0.9rem' }}>
-                        <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>
-                          Complexity
-                        </span>
-                        <div className="flex items-center gap-2" style={{ marginTop: '0.35rem' }}>
-                          <Activity size={18} color={complexityColors[(analysis.estimated_complexity || 'medium').toLowerCase()]} />
-                          <strong style={{ textTransform: 'capitalize' }}>{(analysis.estimated_complexity || 'Medium').replace('_', ' ')}</strong>
-                        </div>
-                      </div>
-                      <ExtractionQuality analysis={analysis as RFPAnalysisType} />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="prep-two-column">
-                  <div className="insight-card">
-                    <h3 className="section-title">
-                      <Target size={20} color="var(--color-primary-light)" />
-                      Key Insights
-                    </h3>
-                    <div className="flex flex-col gap-3">
-                      {(intelligence.key_insights || []).map((item, index) => (
-                        <ExecutiveInsightCard key={`${item.title}-${index}`} item={item} />
-                      ))}
-                    </div>
-                  </div>
-                  <div className="insight-card">
-                    <h3 className="section-title">
-                      <Building size={20} color="var(--color-info)" />
-                      Opportunity Assessment
-                    </h3>
-                    <div className="flex flex-col gap-3">
-                      {(intelligence.opportunity_assessment || []).map((item, index) => (
-                        <ExecutiveInsightCard key={`${item.title}-${index}`} item={item} />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="prep-two-column">
-                  <InsightSection
-                    title="Business Drivers"
-                    icon={<CheckCircle size={20} color="var(--color-success)" />}
-                    items={intelligence.business_drivers}
-                    empty="No business drivers identified."
-                  />
-                  <InsightSection
-                    title="Risks & Dependencies"
-                    icon={<ShieldAlert size={20} color="var(--color-error)" />}
-                    items={intelligence.risks_and_dependencies}
-                    empty="No material risks identified."
-                    accent="var(--color-error)"
-                  />
-                </div>
-
-                <div className="insight-card">
-                  <h3 className="section-title">
-                    <HelpCircle size={20} color="var(--color-warning)" />
-                    Recommendations
-                  </h3>
-                  <StrategicList items={intelligence.recommendations} empty="No recommendations generated." />
-                </div>
-
-                <div className="insight-card">
-                  <h3 className="section-title">
-                    <FileText size={20} color="var(--color-text-muted)" />
-                    Supporting Extracts
-                  </h3>
-                  <div className="prep-two-column">
-                    <InsightSection title="Delivery Signals" icon={<ListChecks size={18} />} items={analysis.functional_requirements} empty="No delivery signals." />
-                    <InsightSection title="Integration/Data Signals" icon={<Database size={18} />} items={[...(analysis.integration_needs || []), ...(analysis.data_needs || [])]} empty="No integration or data signals." />
-                  </div>
-                </div>
-              </>
-            )
-          })()}
-
-          {!analysis.raw_llm_output?.executive_intelligence && (
-          <>
-          <div className="card-elevated">
-            <div className="prep-summary">
-              <div>
-                <h3 className="section-title">
-                  <Info size={20} color="var(--color-primary-light)" />
-                  Executive Summary
-                </h3>
-                <p className="readable-text" style={{ color: 'var(--color-text-primary)' }}>
-                  {cleanDisplayText(analysis.business_problem || 'No explicit business problem stated.')}
-                </p>
-              </div>
-              <div className="side-stack">
-                <div className="insight-card" style={{ padding: '0.9rem' }}>
-                  <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>
-                    Complexity
-                  </span>
-                  <div className="flex items-center gap-2" style={{ marginTop: '0.35rem' }}>
-                    <Activity size={18} color={complexityColors[(analysis.estimated_complexity || 'medium').toLowerCase()]} />
-                    <strong style={{ textTransform: 'capitalize' }}>{(analysis.estimated_complexity || 'Medium').replace('_', ' ')}</strong>
-                  </div>
-                </div>
-                <ExtractionQuality analysis={analysis as RFPAnalysisType} />
-              </div>
+          {isFallbackAnalysis ? (
+            <div className="insight-card" style={{ borderColor: 'rgba(245, 158, 11, 0.55)', background: 'rgba(245, 158, 11, 0.08)' }}>
+              <h3 className="section-title">
+                <AlertTriangle size={20} color="var(--color-warning)" />
+                Model Analysis Unavailable
+              </h3>
+              <p className="readable-text" style={{ marginBottom: 0 }}>
+                Showing source-extracted fallback content because the configured LLM call did not complete. Update the LLM API key, restart the backend worker, and regenerate this RFP for model-authored executive insights.
+              </p>
             </div>
+          ) : null}
+
+          <div className="card-elevated">
+            <h3 className="section-title">
+              <Activity size={20} color="var(--color-primary-light)" />
+              Sentiment Analysis
+            </h3>
+            <p className="readable-text" style={{ color: 'var(--color-text-primary)' }}>
+              {intelligence.sentiment_analysis?.summary || 'No sentiment summary was generated.'}
+            </p>
+            <SentimentPointCards points={intelligence.sentiment_analysis?.points} />
           </div>
 
-          <div className="prep-two-column">
-            <InsightSection
-              title="Delivery Requirements"
-              icon={<ListChecks size={20} color="var(--color-primary-light)" />}
-              items={analysis.functional_requirements}
-              empty="No delivery requirements were confidently extracted."
-            />
-            <InsightSection
-              title="Non-Functional Requirements"
-              icon={<Activity size={20} color="var(--color-accent)" />}
-              items={analysis.non_functional_requirements}
-              empty="No non-functional requirements were confidently extracted."
-            />
+          <div className="insight-card" style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto', padding: '0.65rem' }}>
+            {tabs.map((tab) => (
+              <button
+                key={tab}
+                className={`btn ${activeTab === tab ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ whiteSpace: 'nowrap', padding: '0.55rem 0.75rem' }}
+                onClick={() => setActiveTab(tab)}
+              >
+                {tab}
+              </button>
+            ))}
           </div>
 
-          <div className="prep-two-column">
-            <InsightSection
-              title="Integration Needs"
-              icon={<Building size={20} color="var(--color-info)" />}
-              items={analysis.integration_needs}
-              empty="No explicit integrations were identified."
-            />
-            <InsightSection
-              title="Data & Reporting Needs"
-              icon={<Database size={20} color="var(--color-success)" />}
-              items={analysis.data_needs}
-              empty="No explicit data or reporting requirements were identified."
-            />
-          </div>
+          {activeTab === 'Must-Ask Questions' ? (
+            <SectionCard title="Must-Ask Questions" icon={<HelpCircle size={20} />}>
+              <QuestionCards questions={intelligence.must_ask_questions} />
+            </SectionCard>
+          ) : null}
 
-          <div className="prep-two-column">
-            <InsightSection
-              title="Compliance & Tender Obligations"
-              icon={<ShieldAlert size={20} color="var(--color-warning)" />}
-              items={analysis.compliance_needs}
-              empty="No explicit compliance obligations were identified."
-              accent="var(--color-warning)"
-            />
-            <InsightSection
-              title="Timeline & Commercial Risks"
-              icon={<Clock size={20} color="var(--color-error)" />}
-              items={analysis.timeline_risks}
-              empty="No timeline or commercial risks were identified."
-              accent="var(--color-error)"
-            />
-          </div>
+          {activeTab === 'Top Risks' ? (
+            <SectionCard title="Top Risks" icon={<ShieldAlert size={20} />}>
+              <RiskCards risks={intelligence.top_risks} />
+            </SectionCard>
+          ) : null}
 
-          <div className="prep-two-column">
-            <InsightSection
-              title="Scope Boundaries"
-              icon={<CheckCircle size={20} color="var(--color-success)" />}
-              items={analysis.scope_boundaries}
-              empty="No explicit scope boundaries were identified."
-            />
-            <InsightSection
-              title="Missing Information"
-              icon={<HelpCircle size={20} color="var(--color-warning)" />}
-              items={analysis.missing_information}
-              empty="No major gaps were flagged."
-              accent="var(--color-warning)"
-            />
-          </div>
-          </>
-          )}
+          {activeTab === 'Talking Points' ? (
+            <SectionCard title="Talking Points" icon={<MessageSquare size={20} />}>
+              <TalkingPointCards points={intelligence.talking_points} />
+            </SectionCard>
+          ) : null}
+
+          {activeTab === 'Narrative' ? (
+            <SectionCard title={intelligence.narrative?.title || 'Narrative'} icon={<BookOpen size={20} />}>
+              <p className="readable-text">{intelligence.narrative?.story || 'No narrative was generated.'}</p>
+              <TextList items={intelligence.narrative?.how_it_helps} empty="No supporting narrative points were generated." />
+            </SectionCard>
+          ) : null}
+
+          {activeTab === 'Relevant Knowledge Evidence' ? (
+            <SectionCard title="Relevant Knowledge Evidence" icon={<Target size={20} />}>
+              <EvidenceCards evidence={intelligence.relevant_knowledge_evidence} />
+            </SectionCard>
+          ) : null}
+
+          {activeTab === 'Architecture' ? (
+            <SectionCard title="Architecture" icon={<CircuitBoard size={20} />}>
+              <ArchitectureView architecture={intelligence.architecture} />
+            </SectionCard>
+          ) : null}
         </div>
       )}
     </div>

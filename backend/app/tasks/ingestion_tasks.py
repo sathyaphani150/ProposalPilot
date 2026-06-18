@@ -48,12 +48,16 @@ def analyze_rfp_task(self, session_id: str) -> dict:
                 session.status = "analyzing"
                 await db.commit()
 
-                analysis_data = await analyze_rfp_document(session.raw_text)
-
                 existing_result = await db.execute(
                     select(RFPAnalysis).where(RFPAnalysis.session_id == session.id)
                 )
-                for existing in existing_result.scalars().all():
+                existing_analyses = list(existing_result.scalars().all())
+                analysis_data = await analyze_rfp_document(
+                    session.raw_text,
+                    regenerate=bool(existing_analyses),
+                )
+
+                for existing in existing_analyses:
                     await db.delete(existing)
                 await db.flush()
 

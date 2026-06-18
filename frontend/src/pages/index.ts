@@ -1,5 +1,4 @@
 export { RFPAnalysis } from './RFPAnalysis'
-export { PrepPack } from './PrepPack'
 export { WarRoom } from './WarRoom'
 export { ProposalEditor } from './ProposalEditor'
 export { KnowledgeBase } from './KnowledgeBase'

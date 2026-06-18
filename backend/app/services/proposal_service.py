@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.exceptions import NotFoundError, ValidationError
 from app.models import Proposal, RFPAnalysis, RFPSession
 from app.services import knowledge_service
+from app.services.leadership_output import sanitize_prep_pack_content_for_leadership
 from app.services.llm_service import get_llm_service
 from app.services.rfp_engine import analyze_rfp_document
 
@@ -462,6 +463,14 @@ def _sanitize_prep_output(output: PrepPackLLMOutput) -> dict[str, Any]:
         value = _clean_brief_item(str(payload.get(key) or ""))
         payload[key] = value or str(payload.get(key) or "").strip()[:900]
 
+    return sanitize_prep_pack_content_for_leadership(payload)
+
+
+def proposal_to_public_dict(proposal: Proposal) -> dict[str, Any]:
+    """Serialize proposal without exposing raw prep-pack evidence dumps."""
+    payload = proposal.to_dict()
+    if payload.get("proposal_type") == "prep_pack":
+        payload["content"] = sanitize_prep_pack_content_for_leadership(payload.get("content") or {})
     return payload
 
 
@@ -643,7 +652,7 @@ def _build_prep_pack_content(
             "source": "RFP analysis plus internal KB search snippets",
         },
     }
-    return content
+    return sanitize_prep_pack_content_for_leadership(content)
 
 
 async def generate_prep_pack(db: AsyncSession, session_id: uuid.UUID) -> Proposal:

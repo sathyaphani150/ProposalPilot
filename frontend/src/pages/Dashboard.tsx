@@ -44,10 +44,8 @@ export function Dashboard() {
     },
     {
       icon: Database,
-      label: 'Prep Packs',
-      value: sessions.filter((s) =>
-        ['prep_ready', 'war_room_running', 'war_room_done', 'proposal_ready'].includes(s.status)
-      ).length,
+      label: 'Analyzed',
+      value: sessions.filter((s) => ['analyzed', 'war_room_running', 'war_room_done', 'proposal_ready'].includes(s.status)).length,
       color: 'var(--color-accent)',
     },
   ]
@@ -57,9 +55,9 @@ export function Dashboard() {
       case 'uploaded':
         return { label: 'Analyze RFP', path: `/rfp/${session.id}/analysis` }
       case 'analyzed':
-        return { label: 'Generate Prep Pack', path: `/rfp/${session.id}/analysis` }
+        return { label: 'View Analysis', path: `/rfp/${session.id}/analysis` }
       case 'prep_ready':
-        return { label: 'View Prep Pack', path: `/rfp/${session.id}/prep-pack` }
+        return { label: 'View Analysis', path: `/rfp/${session.id}/analysis` }
       case 'war_room_done':
         return { label: 'View War Room', path: `/rfp/${session.id}/war-room` }
       default:
@@ -225,8 +223,8 @@ function EmptyState({ onNew }: { onNew: () => void }) {
       <div>
         <h3 style={{ marginBottom: '0.5rem' }}>No RFPs Yet</h3>
         <p style={{ color: 'var(--color-text-muted)', maxWidth: 400 }}>
-          Upload your first RFP document to begin generating AI-powered prospect prep packs
-          and proposals.
+          Upload your first RFP document to generate a leadership-ready RFP analysis,
+          client-call strategy, evidence, and architecture.
         </p>
       </div>
       <button className="btn btn-primary btn-lg" onClick={onNew}>

@@ -4,6 +4,8 @@ import { resolve } from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
+const backendTarget = process.env.VITE_BACKEND_URL || 'http://127.0.0.1:8123'
+const backendWsTarget = backendTarget.replace(/^http/, 'ws')
 
 export default defineConfig({
   plugins: [react()],
@@ -16,11 +18,11 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: backendTarget,
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://localhost:8000',
+        target: backendWsTarget,
         ws: true,
       },
     },

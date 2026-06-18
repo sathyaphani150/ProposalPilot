@@ -8,12 +8,33 @@ analysis so the workflow remains demo-stable without hallucinating.
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 from typing import Any
 
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
 
+from app.config import get_settings
 from app.services.llm_service import get_llm_service
+from app.services.rfp_taxonomy import (
+    ADMIN_TERMS as _ADMIN_TERMS,
+    CAPABILITY_LABELS,
+    CAPABILITY_TAG_KEYWORDS as _CAPABILITY_TAG_KEYWORDS,
+    DELIVERY_TERMS as _DELIVERY_TERMS,
+    EVIDENCE_STOPWORDS as _EVIDENCE_STOPWORDS,
+    EXCLUDED_SECTION_CATEGORIES as _EXCLUDED_SECTION_CATEGORIES,
+    GENERIC_SIGNAL_TERMS as _GENERIC_SIGNAL_TERMS,
+    INFRA_OPERATIONAL_SIGNAL_TERMS as _INFRA_OPERATIONAL_SIGNAL_TERMS,
+    INTEGRATION_SIGNAL_TERMS as _INTEGRATION_SIGNAL_TERMS,
+    RFP_SIGNAL_CATEGORY_KEYWORDS as _CATEGORY_KEYWORDS,
+    SECTION_CATEGORIES as _SECTION_CATEGORIES,
+    SECTION_CATEGORY_RULES,
+    SECTION_CLASSIFIER_TERMS,
+    TECHNICAL_SIGNAL_TERMS as _TECHNICAL_SIGNAL_TERMS,
+    TRUST_GATE_NOISE_TERMS as _TRUST_GATE_NOISE_TERMS,
+)
+
+settings = get_settings()
 
 
 class RFPExtractionOutput(BaseModel):
@@ -61,6 +82,75 @@ class ExecutiveIntelligenceOutput(BaseModel):
     discovery_strategy: list[str] = Field(default_factory=list)
 
 
+class RFPSentimentPointOutput(BaseModel):
+    title: str = Field(description="Short, RFP-specific heading derived from a source fact.")
+    insight: str
+    evidence: str
+    implication: str
+
+
+class RFPSentimentOutput(BaseModel):
+    overall_sentiment: str
+    summary: str
+    confidence: str
+    recommended_posture: str
+    points: list[RFPSentimentPointOutput] = Field(default_factory=list)
+
+
+class RFPMustAskQuestionOutput(BaseModel):
+    question: str
+    why_it_matters: str
+    assumption_to_validate: str
+    evidence: str = ""
+
+
+class RFPTopRiskOutput(BaseModel):
+    risk_title: str = Field(description="Specific risk heading based on an actual RFP dependency or requirement.")
+    severity: str
+    probability: str
+    impact: str
+    mitigation: str
+    owner: str
+    evidence: str = ""
+
+
+class RFPTalkingPointOutput(BaseModel):
+    point: str
+    client_angle: str
+    proof_needed: str
+    evidence: str = ""
+
+
+class RFPNarrativeOutput(BaseModel):
+    title: str
+    story: str
+    how_it_helps: list[str] = Field(default_factory=list)
+    evidence_project_title: str = ""
+    confidence: str
+
+
+class RFPArchitectureOutput(BaseModel):
+    summary: str
+    components: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    business_view: list[str] = Field(default_factory=list)
+    technical_view: list[str] = Field(default_factory=list)
+    data_flow: list[str] = Field(default_factory=list)
+    integration_flow: list[str] = Field(default_factory=list)
+    security_operations: list[str] = Field(default_factory=list)
+    decision_points: list[str] = Field(default_factory=list)
+    call_prep_questions: list[str] = Field(default_factory=list)
+
+
+class RFPIntelligenceOutput(BaseModel):
+    sentiment_analysis: RFPSentimentOutput
+    must_ask_questions: list[RFPMustAskQuestionOutput] = Field(default_factory=list)
+    top_risks: list[RFPTopRiskOutput] = Field(default_factory=list)
+    talking_points: list[RFPTalkingPointOutput] = Field(default_factory=list)
+    narrative: RFPNarrativeOutput
+    architecture: RFPArchitectureOutput
+
+
 _SYSTEM_PROMPT = """
 You are a senior pre-sales solutions architect and RFP analyst.
 
@@ -98,218 +188,6 @@ Rules:
 - Avoid generic filler and avoid bid-submission/procurement boilerplate.
 """
 
-
-_CAPABILITY_TAG_KEYWORDS: dict[str, set[str]] = {
-    "NLP": {"nlp", "natural language processing", "lemmatization", "stemming", "tokenization"},
-    "Search Optimization": {"search optimization", "string optimizer", "search string", "search relevance", "search result"},
-    "Information Retrieval": {"information retrieval", "tf-idf", "tf idf", "ranking", "retrieval"},
-    "Query Understanding": {"query intent", "query understanding", "user query", "search query"},
-    "Product Category Classification": {"category classification", "categorization", "classify product", "classify service"},
-    "Machine Learning": {"machine learning", "ml algorithm", "word2vec", "svm", "naive bayes", "model training"},
-    "Cognitive Search": {"cognitive search", "semantic search", "intelligent search"},
-    "Search Relevance": {"relevance", "precision", "recall", "ndcg", "mrr"},
-    "Catalog Management": {"catalog", "product catalog", "service catalog", "seller upload"},
-    "API Integration": {"api", "apis", "microservice", "micro-service", "integration", "integrate"},
-    "Cloud/Hosted Deployment": {"cloud", "deployment", "hosting"},
-    "Security": {"security", "privacy", "encryption", "audit", "access control", "sso"},
-    "Operations & Maintenance": {"operation and maintenance", "o&m", "maintenance", "sla", "support"},
-}
-
-_SECTION_CATEGORIES = (
-    "solution_scope",
-    "business_context",
-    "technical_requirement",
-    "non_functional_requirement",
-    "integration_requirement",
-    "data_requirement",
-    "compliance_security",
-    "infrastructure_operational_requirement",
-    "service_level",
-    "evaluation_criteria",
-    "bidder_eligibility",
-    "procurement_process",
-    "legal_disclaimer",
-    "commercial_terms",
-    "buyer_contact_or_location",
-    "annexure/forms",
-    "irrelevant_noise",
-)
-
-_EXCLUDED_SECTION_CATEGORIES = {
-    "bidder_eligibility",
-    "procurement_process",
-    "legal_disclaimer",
-    "commercial_terms",
-    "annexure/forms",
-    "buyer_contact_or_location",
-    "evaluation_criteria",
-    "irrelevant_noise",
-}
-
-_TRUST_GATE_NOISE_TERMS = {
-    "audited balance",
-    "balance sheet",
-    "statutory auditor",
-    "certificate of incorporation",
-    "turnover",
-    "net worth",
-    "blacklisted",
-    "blacklisting",
-    "emd",
-    "earnest money",
-    "bid submission",
-    "pre-bid meeting",
-    "pre bid meeting",
-    "date of bid opening",
-    "bid opening",
-    "contact details",
-    "address",
-    " floor",
-    "building",
-    "new delhi",
-    "connaught place",
-    "disclaimer",
-    "no liability",
-    "no representation",
-    "bidder shall bear",
-    "cost of bid",
-    "annexure",
-    "self-certified",
-    "self certified",
-    "notarized",
-    "gst",
-    "companies act",
-    "llp act",
-    "independent advice",
-    "not an agreement",
-    "not an offer",
-}
-
-_TECHNICAL_SIGNAL_TERMS = {
-    "nlp",
-    "nlu",
-    "natural language processing",
-    "search string optimization",
-    "string optimizer",
-    "stop-word",
-    "stop word",
-    "stemming",
-    "lemmatization",
-    "tokenization",
-    "normalization",
-    "noise removal",
-    "feature extraction",
-    "category classifier",
-    "category classification",
-    "tf-idf",
-    "tf idf",
-    "word2vec",
-    "support vector machine",
-    "svm",
-    "naive bayes",
-    "cognitive search",
-    "search relevance",
-    "query understanding",
-    "seller category suggestion",
-}
-
-_INTEGRATION_SIGNAL_TERMS = {
-    "microservice",
-    "micro-service",
-    "api",
-    "existing web service",
-    "apache solr",
-    "solr",
-    "current search architecture",
-    "integration",
-    "consumed by apis",
-}
-
-_INFRA_OPERATIONAL_SIGNAL_TERMS = {
-    "gcc infrastructure",
-    "hosting",
-    "deployment",
-    "install",
-    "commission",
-    "operate",
-    "maintain",
-    "operation and maintenance",
-    "o&m",
-    "availability",
-    "cloud service",
-    "performance",
-    "observability",
-    "support",
-}
-
-_ADMIN_TERMS = {
-    "bid",
-    "bids",
-    "bidder",
-    "bidders",
-    "tender",
-    "proposal",
-    "proposals",
-    "bank guarantee",
-    "earnest money",
-    "emd",
-    "acceptance",
-    "work order",
-    "forfeited",
-    "submission",
-    "letter of authorization",
-    "bid-security",
-    "bid security",
-    "technical score",
-    "bid score",
-    "bid price",
-    "evaluated bid",
-    "addendum",
-    "addenda",
-    "read the rfp",
-    "submission of bid",
-    "procedure",
-    "certifying authority",
-    "mapped documents",
-    "digital signature",
-    "dsc",
-    "e-tender",
-    "tendering portal",
-    "pre-contract integrity pact",
-    "bids received after closing",
-    "shall be rejected",
-    "bid closing",
-    "bidder registration",
-    "registered bidder",
-    "audited balance sheet",
-    "statutory auditor",
-    "net worth",
-    "turnover",
-    "blacklisting",
-    "declaration",
-    "annexure",
-    "form",
-}
-
-_DELIVERY_TERMS = {
-    "application",
-    "mobile",
-    "system",
-    "software",
-    "portal",
-    "api",
-    "apis",
-    "database",
-    "dashboard",
-    "report",
-    "user",
-    "integration",
-    "backend",
-    "frontend",
-    "service",
-    "module",
-    "workflow",
-}
 
 
 def _strip_reference_noise(text: str) -> str:
@@ -489,11 +367,22 @@ def _is_low_value_unit(unit: str) -> bool:
         "duly authorized officers",
         "valid certifying authority",
         "bid document through offline",
+        "copy of the audited",
+        "copy of audited",
+        "this rfp document includes statements",
+        "this rfp document may not be appropriate",
+        "not possible for",
+        "investment objectives",
+        "financial situation",
+        "particular needs of each party",
+        "costs and expenses will remain with the bidder",
+        "shall not be liable",
+        "date of commencement of bidding process",
     }
     return any(term in lower for term in low_value_terms)
 
 
-def _contains_any(text: str, terms: set[str]) -> bool:
+def _contains_any(text: str, terms: Collection[str]) -> bool:
     lower = text.lower()
     return any(term in lower for term in terms)
 
@@ -580,66 +469,11 @@ def _pick_units(
 
 def _classify_document_section(unit: str) -> tuple[str, float, str]:
     lower = unit.lower()
-    eligibility_terms = {
-        "audited balance sheet",
-        "audited books of accounts",
-        "copy of audited",
-        "turnover",
-        "net worth",
-        "certificate of incorporation",
-        "statutory auditor",
-        "blacklisting declaration",
-        "iso",
-        "cmmi",
-        "company registration",
-        "ca certificate",
-    }
-    procurement_terms = {
-        "emd",
-        "earnest money",
-        "bid submission",
-        "pre-bid",
-        "pre bid",
-        "bid opening",
-        "cppp registration",
-        "date/time",
-        "date and time",
-        "queries from bidders",
-        "bid validity",
-        "withdrawal",
-        "corrigendum",
-        "bids received after closing",
-        "shall be rejected",
-        "bidder registration",
-    }
-    legal_terms = {
-        "no liability",
-        "no representation",
-        "not an agreement",
-        "not an offer",
-        "bidder shall bear",
-        "cost of bid",
-        "accuracy",
-        "adequacy",
-        "correctness",
-        "independent advice",
-        "reserves right to reject",
-        "disclaimer",
-    }
-    contact_terms = {
-        "address",
-        "floor",
-        "tower",
-        "building",
-        "connaught place",
-        "new delhi",
-        "email",
-        "phone",
-        "telephone",
-        "contact details",
-        "jeevan bharti",
-    }
-    compliance_terms = {"ipr ownership", "ipr", "data residency", "confidentiality", "security breach", "audit", "access control", "nda"}
+    eligibility_terms = SECTION_CLASSIFIER_TERMS["eligibility"]
+    procurement_terms = SECTION_CLASSIFIER_TERMS["procurement"]
+    legal_terms = SECTION_CLASSIFIER_TERMS["legal"]
+    contact_terms = SECTION_CLASSIFIER_TERMS["contact"]
+    compliance_terms = SECTION_CLASSIFIER_TERMS["compliance"]
 
     if any(term in lower for term in contact_terms) and not _has_solution_signal(lower):
         return "buyer_contact_or_location", 0.94, "Buyer address/contact/location text, not solution scope."
@@ -658,26 +492,10 @@ def _classify_document_section(unit: str) -> tuple[str, float, str]:
     if any(term in lower for term in compliance_terms):
         return "compliance_security", 0.86, "Security, compliance, confidentiality, or IPR requirement."
 
-    category_rules: tuple[tuple[str, set[str], str], ...] = (
-        ("legal_disclaimer", {"disclaimer", "no contractual obligation", "not a recommendation", "warranty", "copyright", "confidential"}, "Legal/disclaimer language, not delivery scope."),
-        ("bidder_eligibility", {"eligibility", "turnover", "net worth", "audited balance sheet", "statutory auditor", "blacklisting", "experience certificate"}, "Bidder qualification evidence."),
-        ("procurement_process", {"bid submission", "submission of bid", "bids received after closing", "shall be rejected", "emd", "earnest money", "pre-bid", "pre bid", "bidder registration", "e-tender", "tendering portal", "last date"}, "Tender process instruction."),
-        ("evaluation_criteria", {"evaluation", "technical score", "financial score", "scoring", "marks", "qcbs", "l1"}, "Bid evaluation criteria."),
-        ("commercial_terms", {"payment terms", "invoice", "penalty", "liquidated damages", "bank guarantee", "performance guarantee", "price bid"}, "Commercial or contractual term."),
-        ("integration_requirement", {"solr", "api", "microservice", "micro-service", "integrate", "integration"}, "Integration or platform touchpoint."),
-        ("data_requirement", {"training data", "search logs", "clickstream", "catalog", "taxonomy", "category", "data set", "dataset"}, "Data, catalog, taxonomy, or model-input requirement."),
-        ("compliance_security", {"gcc", "security", "audit", "iprid", "ipr", "data residency", "encryption", "access control"}, "Security, compliance, hosting, or IPR requirement."),
-        ("service_level", {"operation and maintenance", "o&m", "maintenance", "sla", "uptime", "support", "availability", "latency"}, "Operational or service-level requirement."),
-        ("non_functional_requirement", {"performance", "scalable", "high availability", "latency", "throughput", "response time"}, "Non-functional quality attribute."),
-        ("technical_requirement", {"nlp", "natural language", "stop word", "stemming", "lemmatization", "tokenization", "normalization", "tf-idf", "word2vec", "svm", "naive bayes", "machine learning", "classification"}, "Technical solution feature."),
-        ("annexure/forms", {"annexure", "format for", "declaration", "certificate"}, "Form or annexure instruction."),
-        ("business_context", {"business problem", "objective", "purpose", "current", "users", "stakeholders", "non-availability"}, "Business context or desired outcome."),
-        ("solution_scope", {"scope of work", "solution", "implement", "develop", "provide", "build", "search"}, "General solution scope."),
-    )
-    for category, keywords, reason in category_rules:
-        if any(keyword in lower for keyword in keywords):
-            confidence = 0.86 if category in _EXCLUDED_SECTION_CATEGORIES or category in {"technical_requirement", "integration_requirement"} else 0.74
-            return category, confidence, reason
+    for rule in SECTION_CATEGORY_RULES:
+        if any(keyword in lower for keyword in rule.keywords):
+            confidence = 0.86 if rule.category in _EXCLUDED_SECTION_CATEGORIES or rule.category in {"technical_requirement", "integration_requirement"} else 0.74
+            return rule.category, confidence, rule.reason
     if _is_tender_boilerplate(unit) or _is_low_value_unit(unit):
         return "irrelevant_noise", 0.72, "Low-value tender boilerplate or document noise."
     return "irrelevant_noise", 0.45, "No clear business, technical, delivery, or compliance signal."
@@ -810,9 +628,9 @@ def _normalized_source_text(raw_text: str) -> str:
 def _extract_opportunity_title(raw_text: str) -> str:
     text = _normalized_source_text(raw_text[:8_000])
     patterns = (
-        r"Request for Proposal \(?RFP\)? for\s+(.{20,180}?)(?: Union Bank| Department| Page | Classification| \d{1,2}/\d{1,2}|$)",
-        r"RFP for\s+(.{12,160}?)(?: Page | Classification| Department|$)",
-        r"Empanelment of\s+(.{12,140}?)(?: Page | Classification| Department|$)",
+        r"Request for Proposal(?:\s*\(RFP\))?\s+for\s+(.{20,180}?)(?:\.| Department| Page | Classification| \d{1,2}/\d{1,2}|$)",
+        r"RFP for\s+(.{12,160}?)(?:\.| Page | Classification| Department|$)",
+        r"Empanelment of\s+(.{12,140}?)(?:\.| Page | Classification| Department|$)",
     )
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE)
@@ -950,55 +768,147 @@ def _critical_gaps(analysis: dict[str, Any]) -> list[str]:
     return gaps
 
 
-def _looks_like_search_nlp_opportunity(raw_text: str, tags: list[str] | None = None) -> bool:
-    lower = raw_text.lower()
-    tag_set = set(tags or [])
-    return bool(
-        {"NLP", "Search Optimization", "Product Category Classification"} & tag_set
-    ) or _has_search_nlp_signals(lower)
+def _specific_items(items: Any, *, limit: int = 4, keywords: Collection[str] | None = None) -> list[str]:
+    if not isinstance(items, list):
+        return []
+    cleaned: list[str] = []
+    for item in items:
+        text = _strip_reference_noise(re.sub(r"\s+", " ", str(item))).strip()
+        if not text or _is_low_value_unit(text) or _is_tender_boilerplate(text) or _is_admin_only(text):
+            continue
+        lower = text.lower()
+        if any(term in lower for term in _GENERIC_SIGNAL_TERMS):
+            continue
+        if keywords and not any(_contains_term(lower, keyword) for keyword in keywords):
+            continue
+        if len(re.findall(r"[A-Za-z0-9]+", text)) < 3:
+            continue
+        cleaned.append(text[:320])
+        if len(cleaned) >= limit:
+            break
+    return _dedupe(cleaned)[:limit]
 
 
-def _missing_information_questions(raw_text: str, tags: list[str]) -> list[str]:
-    if _looks_like_search_nlp_opportunity(raw_text, tags):
-        lower = raw_text.lower()
-        search_stack_question = "What search engine, schema design, analyzers, indexes, and query handlers are currently used?"
-        infrastructure_question = "What hosting resources, deployment constraints, observability tools, and approval gates are available?"
-        runtime_question = (
-            "Are GPUs allowed or required, or must the solution run on CPU-only infrastructure?"
-            if any(term in lower for term in ("machine learning", "ml", "model", "nlp"))
-            else "What runtime, scaling, and performance constraints should the search optimization layer satisfy?"
+def _short_signal(text: str, *, words: int = 11, max_chars: int = 110) -> str:
+    cleaned = _strip_reference_noise(re.sub(r"\s+", " ", str(text))).strip(" .:-")
+    cleaned = re.sub(r"^(the buyer is seeking\s+)?request for proposal\s*(\(rfp\))?\s*(for)?\s*", "", cleaned, flags=re.IGNORECASE).strip(" .:-")
+    cleaned = re.sub(r"^rfp\s*(for)?\s*", "", cleaned, flags=re.IGNORECASE).strip(" .:-")
+    tokens = re.findall(r"[A-Za-z0-9&/+.-]+", cleaned)
+    label_tokens = tokens[:words]
+    while label_tokens and label_tokens[-1].lower() in {"of", "for", "to", "and", "or", "the", "a", "an"}:
+        label_tokens.pop()
+    label = " ".join(label_tokens).strip()
+    return (label or cleaned)[:max_chars].strip(" .:-")
+
+
+def _has_domain_terms(text: str, terms: set[str]) -> bool:
+    lower = text.lower()
+    return any(_contains_term(lower, term) for term in terms)
+
+
+def _analysis_signals(analysis: dict[str, Any] | None) -> dict[str, list[str]]:
+    source = analysis or {}
+    data_signals = _specific_items(source.get("data_needs"), limit=4, keywords=_CATEGORY_KEYWORDS["data"])
+    data_signals = [
+        item
+        for item in data_signals
+        if not _contains_any(
+            item,
+            {
+                "security",
+                "confidentiality",
+                "confidential",
+                "privacy",
+                "compliance",
+                "cpra",
+                "audit",
+                "access control",
+            },
         )
-        return [
-            "What is the current search success rate and zero-result query rate?",
-            "Which search relevance metrics will define success: Precision@K, Recall@K, NDCG, MRR, conversion, or another KPI?",
-            "How many products, services, categories, catalog records, and seller-upload records are in scope?",
-            "What is the average and peak search volume per day, and what latency SLA is expected?",
-            "Are historical search logs, clickstream data, conversion events, and zero-result query logs available?",
-            "Is labeled training data available for product/service category classification?",
-            search_stack_question,
-            "Which APIs, events, or batch interfaces are available for integration with the existing search architecture?",
-            "Is multilingual search, synonym handling, spelling correction, transliteration, or semantic search expected?",
-            infrastructure_question,
-            runtime_question,
-            "What security, data residency, audit logging, and IPR ownership constraints are non-negotiable?",
-            "What is the expected O&M duration, support window, SLA model, and incident response expectation?",
-            "Who owns ongoing model retraining, relevance tuning, taxonomy changes, and feedback-loop governance?",
-            "Which scope is mandatory for the first release versus a later rollout or managed-service phase?",
-        ]
-    return [
-        "What measurable business outcomes and success metrics will define project success?",
-        "Which requirements are mandatory for the first release versus optional or future-phase scope?",
-        "What source systems, data owners, data quality constraints, and integration dependencies are in scope?",
-        "What acceptance criteria, UAT process, sign-off authority, and go-live gates will be used?",
-        "What hosting, security, access control, audit logging, and compliance requirements are mandatory?",
-        "What implementation timeline is expected, and which client-side dependencies can affect it?",
-        "What support model, SLA, O&M duration, change-control process, and escalation path are expected?",
-        "What commercial constraints, budget range, pricing model preference, and payment milestones should we assume?",
-        "Who are the decision makers, evaluators, technical owners, and daily business users?",
-        "What existing assets, documentation, APIs, sample data, and test environments will be provided?",
-        "What risks or past failures motivated this RFP?",
-        "What does the buyer expect from the vendor beyond implementation: advisory, training, migration, or operations?",
     ]
+    return {
+        "functional": _specific_items(source.get("functional_requirements"), limit=5, keywords=_CATEGORY_KEYWORDS["functional"]),
+        "non_functional": _specific_items(source.get("non_functional_requirements"), limit=4, keywords=_CATEGORY_KEYWORDS["control"]),
+        "data": data_signals,
+        "integration": _specific_items(source.get("integration_needs"), limit=4, keywords=_CATEGORY_KEYWORDS["integration"]),
+        "compliance": _specific_items(source.get("compliance_needs"), limit=4, keywords=_CATEGORY_KEYWORDS["control"]),
+        "timeline": _specific_items(source.get("timeline_risks"), limit=3, keywords=_CATEGORY_KEYWORDS["timeline"]),
+        "scope": _specific_items(source.get("scope_boundaries"), limit=3, keywords=_CATEGORY_KEYWORDS["scope"]),
+    }
+
+
+def _rfp_focus(analysis: dict[str, Any] | None, raw_text: str) -> str:
+    source = analysis or {}
+    focus_source = (
+        _extract_opportunity_title(raw_text)
+        or (_specific_items(source.get("functional_requirements"), limit=1) or [""])[0]
+        or str(source.get("business_problem") or "")
+        or "this initiative"
+    )
+    focus_source = re.split(r",?\s+with strategic implications\b", focus_source, maxsplit=1, flags=re.IGNORECASE)[0]
+    return _short_signal(focus_source, words=13, max_chars=120) or "this initiative"
+
+
+def _missing_information_questions(
+    raw_text: str,
+    tags: list[str],
+    analysis: dict[str, Any] | None = None,
+) -> list[str]:
+    signals = _analysis_signals(analysis)
+    business_problem = _rfp_focus(analysis, raw_text)
+    questions: list[str] = [
+        f"What measurable outcome would make {business_problem} successful from the buyer's point of view?",
+    ]
+
+    for item in signals["functional"][:3]:
+        label = _short_signal(item)
+        lower_label = label.lower()
+        if any(term in lower_label for term in ("migration", "migrated", "dedicated host", "aws", "environment")):
+            questions.append(f"For '{label}', what current infrastructure, dependencies, AWS account/VPC/IAM constraints, cutover window, rollback plan, and acceptance evidence must be confirmed?")
+        elif any(term in lower_label for term in ("test", "testing", "validation", "uat")):
+            questions.append(f"For '{label}', who owns test data, regression scenarios, defect triage, UAT sign-off, and remediation acceptance?")
+        elif any(term in lower_label for term in ("upgrade", "release", "version")):
+            questions.append(f"For '{label}', what release governance, branching/build process, approval path, rollback rule, and production promotion evidence are expected?")
+        else:
+            questions.append(f"What exact workflow, roles, dependencies, and acceptance evidence should define completion for '{label}'?")
+
+    for item in signals["integration"][:3]:
+        label = _short_signal(item)
+        questions.append(f"What interface contract, owner, environment, credentials, sample payloads, and test window are available for '{label}'?")
+
+    for item in signals["data"][:3]:
+        label = _short_signal(item)
+        questions.append(f"Who owns '{label}', and what quality, migration, retention, and reconciliation rules must the proposal assume?")
+
+    for item in [*signals["non_functional"][:2], *signals["compliance"][:2]]:
+        label = _short_signal(item)
+        questions.append(f"Which go-live evidence, reviewer, remediation window, and sign-off gate apply to '{label}'?")
+
+    for item in signals["timeline"][:2]:
+        label = _short_signal(item)
+        questions.append(f"For the timeline or milestone signal '{label}', which client-side dependencies can move the date, and what change-control trigger should apply?")
+
+    for item in signals["scope"][:2]:
+        label = _short_signal(item)
+        questions.append(f"For '{label}', what is explicitly out of scope, buyer-owned, or handled during support/O&M rather than initial build?")
+
+    lower = raw_text.lower()
+    if "test environment" in lower or "validation and testing" in lower:
+        questions.append("For the separate test environment and migrated application validation, who owns test data, regression scenarios, defect triage, UAT sign-off, and remediation acceptance?")
+    if "upgrade process" in lower or "releasing new versions" in lower:
+        questions.append("For the formal upgrade process, what release governance, build packaging, approval path, rollback rule, and production promotion evidence are expected?")
+    if _has_domain_terms(lower, {"model", "machine learning", "ai", "nlp", "classification", "prediction"}):
+        ai_label = _short_signal((signals["functional"] or signals["data"] or ["AI/model requirement"])[0])
+        questions.append(f"What validation dataset, relevance metric, error-review process, monitoring, and retraining ownership will be accepted for '{ai_label}'?")
+    if _has_domain_terms(lower, {"mobile", "portal", "dashboard", "workflow", "user"}):
+        ux_label = _short_signal((signals["functional"] or ["user-facing workflow"])[0])
+        questions.append(f"Which user roles, journeys, approval states, notifications, and accessibility expectations are in scope for '{ux_label}'?")
+
+    if len(questions) < 8:
+        for gap in _critical_gaps(analysis or {}):
+            questions.append(gap.replace("Not specified clearly enough: ", "Can the client confirm ").rstrip(".") + "?")
+
+    return _dedupe(questions)[:16]
 
 
 def _evidence_for(raw_text: str, keywords: set[str], fallback: str = "") -> str:
@@ -1032,120 +942,6 @@ def _requirement(
 
 def _normalized_requirements(raw_text: str, analysis: dict[str, Any]) -> list[dict[str, Any]]:
     requirements: list[dict[str, Any]] = []
-    search_scope = _looks_like_search_nlp_opportunity(raw_text, analysis.get("domain_tags", []))
-    if search_scope:
-        specs = [
-            (
-                "Search Query Optimization",
-                "Build a query preprocessing and optimization layer that extracts product/service-relevant terms from buyer search queries using stop-word removal, stemming, lemmatization, tokenization, normalization, and noise removal.",
-                "Functional",
-                "Critical",
-                {"string optimizer", "stop word", "stemming", "lemmatization", "tokenization", "normalization", "noise removal"},
-                "This is the heart of the solution: improving search relevance before the query reaches the search engine.",
-            ),
-            (
-                "Query Preprocessing Pipeline",
-                "Preprocess buyer queries before search execution, including cleanup, normalization, linguistic processing, and feature preparation.",
-                "Functional",
-                "Critical",
-                {"query", "search string", "tokenization", "normalization", "stop word", "lemmatization"},
-                "This makes query intelligence reusable instead of embedding it directly into search-engine configuration.",
-            ),
-            (
-                "Stop-word Removal, Stemming, Lemmatization, Tokenization, Normalization, Noise Removal",
-                "Implement core NLP preprocessing operations needed to transform noisy buyer search text into search-ready terms.",
-                "Functional",
-                "Critical",
-                {"stop word", "stemming", "lemmatization", "tokenization", "normalization", "noise removal"},
-                "These operations are the explicit NLP mechanics behind search string optimization.",
-            ),
-            (
-                "Product/Service Feature Extraction",
-                "Extract product and service feature signals from user queries and seller catalog text so search and classification can use semantically useful attributes.",
-                "Functional",
-                "High",
-                {"feature information", "feature extraction", "product/service feature", "product feature", "service feature"},
-                "Feature extraction should support both buyer search and seller catalog categorization.",
-            ),
-            (
-                "Category Classification Engine",
-                "Classify products and services into the correct category using NLP/ML models and taxonomy-aware rules.",
-                "Functional",
-                "Critical",
-                {"category classification", "categorization", "classify product", "classify service"},
-                "Wrong category assignment can directly degrade discovery quality, search relevance, and onboarding quality.",
-            ),
-            (
-                "ML/NLP Algorithm Layer",
-                "Use appropriate algorithms such as TF-IDF, word2vec, SVM, Naive Bayes, or comparable techniques where validated by data and performance constraints.",
-                "Functional",
-                "Medium",
-                {"tf-idf", "tf idf", "word2vec", "svm", "naive bayes", "machine learning"},
-                "Algorithm choice should be validated against labeled data, relevance KPIs, latency, and explainability needs.",
-            ),
-            (
-                "Search Stack Integration",
-                "Integrate the optimization layer with the existing search architecture through APIs or microservices without disrupting current search operations.",
-                "Integration",
-                "Critical",
-                {"search architecture", "search engine", "api", "microservice", "micro-service"},
-                "Search-stack integration is a delivery risk and proposal differentiator; the design should augment, not blindly replace, current search.",
-            ),
-            (
-                "API/Microservice Exposure",
-                "Expose NLP optimization and classification capabilities through APIs or microservices consumable by the existing platform.",
-                "Integration",
-                "Critical",
-                {"api", "apis", "microservice", "micro-service", "consumed by apis"},
-                "This keeps the intelligence layer modular and easier to integrate with existing platform services.",
-            ),
-            (
-                "Seller Upload Categorization Support",
-                "Support category suggestions or validation during seller product/service upload so catalog quality improves upstream.",
-                "Functional",
-                "High",
-                {"seller", "upload", "catalog", "categorization"},
-                "Improving seller-side categorization reduces downstream search ambiguity.",
-            ),
-            (
-                "Catalog Fitment and Cleansing Support",
-                "Identify catalog/category fitment issues that reduce search quality and support targeted cleanup or taxonomy alignment.",
-                "Data",
-                "High",
-                {"catalog", "category", "taxonomy", "seller"},
-                "Catalog quality is a practical dependency for reliable search relevance and category classification.",
-            ),
-            (
-                "Hosting and Deployment",
-                "Deploy the solution within the required hosting environment while meeting data residency, security, and operational constraints.",
-                "Operational",
-                "Critical",
-                {"cloud", "hosting", "deployment"},
-                "Infrastructure constraints can change architecture, model selection, observability, and cost.",
-            ),
-            (
-                "Operations and Maintenance",
-                "Provide ongoing support, relevance tuning, monitoring, issue resolution, and model or taxonomy updates during the O&M period.",
-                "Operational",
-                "High",
-                {"operation and maintenance", "o&m", "maintenance", "support", "sla"},
-                "Search relevance is not one-and-done; it needs tuning, monitoring, and ownership.",
-            ),
-            (
-                "Security, Confidentiality, and IPR Compliance",
-                "Meet security, auditability, data handling, and IPR ownership requirements applicable to government deployment.",
-                "Compliance",
-                "High",
-                {"security", "ipr", "intellectual property", "audit", "data residency"},
-                "Proposal commitments should separate explicit RFP obligations from assumptions that need legal/commercial review.",
-            ),
-        ]
-        for name, description, category, priority, keywords, interpretation in specs:
-            evidence = _evidence_for(raw_text, keywords)
-            if evidence:
-                requirements.append(_requirement(name, description, category, priority, evidence, interpretation))
-        return requirements[:14]
-
     legacy_sources = [
         ("Functional", analysis.get("functional_requirements", [])),
         ("Non-functional", analysis.get("non_functional_requirements", [])),
@@ -1183,14 +979,24 @@ def _normalized_requirements(raw_text: str, analysis: dict[str, Any]) -> list[di
 
 def _score_bid(analysis: dict[str, Any], requirements: list[dict[str, Any]], raw_text: str) -> dict[str, int]:
     tags = set(analysis.get("domain_tags", []))
-    search_scope = _looks_like_search_nlp_opportunity(raw_text, list(tags))
-    strategic_fit = 84 if search_scope else 72
-    technical_fit = 84 if {"NLP", "Search Optimization", "Product Category Classification", "API Integration"} & tags else 70
-    domain_fit = 78 if "Government Procurement" in tags else 65
-    delivery_risk = 62 if search_scope else 68
-    commercial = 72 if requirements else 58
-    competitive = 68 if search_scope else 60
-    if len(analysis.get("missing_information", [])) > 10:
+    signal_count = sum(
+        len(analysis.get(key, []) or [])
+        for key in (
+            "functional_requirements",
+            "non_functional_requirements",
+            "data_needs",
+            "integration_needs",
+            "compliance_needs",
+        )
+    )
+    missing_count = len(analysis.get("missing_information", []) or [])
+    strategic_fit = 66 + min(len(tags), 6) * 3 + min(len(requirements), 8)
+    technical_fit = 62 + min(signal_count, 12) * 2
+    domain_fit = 60 + min(len(tags), 8) * 3
+    delivery_risk = 78 - min(missing_count, 12) * 2
+    commercial = 64 + min(len(requirements), 10) - min(missing_count, 10)
+    competitive = 62 + min(len(tags), 5) * 2
+    if missing_count > 10:
         delivery_risk -= 4
         commercial -= 3
     overall = round((strategic_fit + technical_fit + domain_fit + delivery_risk + commercial + competitive) / 6)
@@ -1205,324 +1011,1107 @@ def _score_bid(analysis: dict[str, Any], requirements: list[dict[str, Any]], raw
     }
 
 
-def _risk_assessment(raw_text: str, tags: list[str]) -> list[dict[str, str]]:
-    if _looks_like_search_nlp_opportunity(raw_text, tags):
-        search_stack = "search stack"
-        deployment_context = "target environment"
-        return [
+def _dedupe_risk_cards(risks: list[dict[str, str]]) -> list[dict[str, str]]:
+    output: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for risk in risks:
+        key = re.sub(r"[^a-z0-9]+", " ", risk.get("risk_title", "").lower()).strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        output.append(risk)
+    return output
+
+
+def _risk_assessment(
+    raw_text: str,
+    tags: list[str],
+    analysis: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
+    lower = raw_text.lower()
+    signals = _analysis_signals(analysis)
+    risks: list[dict[str, str]] = []
+
+    for item in signals["integration"][:3]:
+        label = _short_signal(item)
+        risks.append(
             {
-                "risk_title": "Poor quality catalog data",
+                "risk_title": label,
                 "severity": "High",
                 "probability": "Medium",
-                "impact": "Search relevance and category classification accuracy may underperform even with good NLP models.",
-                "mitigation": "Run a discovery data audit, profile catalog fields, define cleansing ownership, and phase model rollout by category quality.",
-                "owner": "Joint",
-            },
-            {
-                "risk_title": "Insufficient labeled training data",
-                "severity": "High",
-                "probability": "Medium",
-                "impact": "Category models may rely on weak supervision or manual labeling, increasing timeline and cost.",
-                "mitigation": "Validate available labels early and propose a labeling, active-learning, or rules-plus-model bootstrapping plan.",
+                "impact": f"Delivery and estimates can slip if the client has not confirmed interface ownership, environment access, credentials, payload examples, and test windows for '{label}'.",
+                "mitigation": f"Before commitment, obtain the interface contract, owner matrix, sample payloads, error scenarios, and integration test calendar for '{label}'.",
                 "owner": "Client",
-            },
+            }
+        )
+
+    for item in signals["data"][:3]:
+        label = _short_signal(item)
+        risks.append(
             {
-                "risk_title": "Undefined relevance KPIs",
-                "severity": "High",
-                "probability": "High",
-                "impact": "Acceptance can become subjective, causing disputes around whether search has improved.",
-                "mitigation": "Agree Precision@K, NDCG, MRR, zero-result reduction, click-through, and conversion metrics before build.",
-                "owner": "Joint",
-            },
-            {
-                "risk_title": f"{search_stack} integration complexity",
-                "severity": "Medium",
-                "probability": "Medium",
-                "impact": "Existing schema, analyzers, indexes, and query handlers may constrain NLP query rewriting.",
-                "mitigation": f"Request {search_stack} version/schema details, representative queries, staging access, and integration test windows.",
-                "owner": "Client",
-            },
-            {
-                "risk_title": "Search latency degradation",
+                "risk_title": label,
                 "severity": "High",
                 "probability": "Medium",
-                "impact": "NLP preprocessing or classification can slow buyer search if not designed as a low-latency service.",
-                "mitigation": "Set latency budgets, cache common enrichments, use async/offline enrichment where possible, and load test early.",
-                "owner": "Vendor",
-            },
-            {
-                "risk_title": "Category taxonomy ambiguity",
-                "severity": "Medium",
-                "probability": "High",
-                "impact": "Ambiguous or overlapping categories can reduce classification explainability and user trust.",
-                "mitigation": "Create taxonomy governance, confusion-matrix review, and human override workflows for disputed categories.",
+                "impact": f"Acceptance can be disputed if ownership, quality thresholds, migration rules, reporting definitions, or reconciliation approach for '{label}' are unclear.",
+                "mitigation": f"Run data discovery for '{label}', assign source owners, and agree profiling, cleansing, reconciliation, and reporting acceptance rules.",
                 "owner": "Joint",
-            },
+            }
+        )
+
+    for item in [*signals["non_functional"][:2], *signals["compliance"][:2]]:
+        label = _short_signal(item)
+        risks.append(
             {
-                "risk_title": "Scope creep into full search engine replacement",
+                "risk_title": label,
                 "severity": "High",
                 "probability": "Medium",
-                "impact": "A query optimization layer can expand into ranking, catalog cleansing, analytics, UI, and full search rebuild.",
-                "mitigation": "Define architecture boundaries and price discovery, MVP, rollout, and O&M as separate milestones.",
+                "impact": f"Go-live can be blocked if evidence format, reviewer authority, remediation timing, or acceptance gate for '{label}' is not agreed early.",
+                "mitigation": f"Confirm control evidence, reviewer, test method, remediation SLA, and final sign-off gate for '{label}' before design lock.",
                 "owner": "Joint",
-            },
+            }
+        )
+
+    for item in signals["functional"][:3]:
+        label = _short_signal(item)
+        risks.append(
             {
-                "risk_title": f"{deployment_context} deployment limitations",
+                "risk_title": label,
                 "severity": "Medium",
                 "probability": "Medium",
-                "impact": "Approved infrastructure may limit model choice, GPU use, dependencies, observability, or deployment automation.",
-                "mitigation": f"Validate {deployment_context} constraints, approved libraries, CI/CD process, monitoring stack, and data movement rules.",
-                "owner": "Client",
-            },
+                "impact": f"The '{label}' scope can become disputed if first-release behavior, exclusions, UAT data, and sign-off tests remain broad.",
+                "mitigation": f"Convert '{label}' into measurable acceptance criteria, explicit exclusions, owner sign-off, UAT evidence, and change-control triggers.",
+                "owner": "Joint",
+            }
+        )
+
+    for item in signals["timeline"][:2]:
+        label = _short_signal(item)
+        risks.append(
             {
-                "risk_title": "O&M and model retraining expectations",
+                "risk_title": label,
+                "severity": "Medium",
+                "probability": "Medium",
+                "impact": f"The '{label}' milestone can create commercial exposure if buyer-owned access, approvals, data, or environments arrive late.",
+                "mitigation": f"Tie '{label}' dates to dependency readiness, client-owned prerequisites, schedule-relief language, and change-request mechanics.",
+                "owner": "Joint",
+            }
+        )
+
+    if any(term in lower for term in ("operate", "maintain", "o&m", "support", "sla", "incident")):
+        scope_label = _short_signal((signals["scope"] or ["support and maintenance scope"])[0])
+        risks.append(
+            {
+                "risk_title": scope_label,
                 "severity": "Medium",
                 "probability": "High",
-                "impact": "Search relevance can decay as catalog, categories, and buyer behavior change.",
-                "mitigation": "Define retraining cadence, relevance review board, feedback loops, and operational responsibility in the proposal.",
+                "impact": f"The '{scope_label}' obligation can turn implementation into open-ended support, tuning, reporting, or incident ownership.",
+                "mitigation": f"Separate build, warranty, O&M, SLA coverage, escalation, monitoring, reporting cadence, and change-request obligations for '{scope_label}'.",
                 "owner": "Joint",
-            },
-        ]
-    return [
-        {
-            "risk_title": "Ambiguous acceptance criteria",
-            "severity": "High",
-            "probability": "Medium",
-            "impact": "Delivery completion may be disputed if success metrics and sign-off ownership remain unclear.",
-            "mitigation": "Define measurable outcomes, UAT process, acceptance gates, and change-control rules during discovery.",
-            "owner": "Joint",
-        },
-        {
-            "risk_title": "Client dependency readiness",
-            "severity": "Medium",
-            "probability": "Medium",
-            "impact": "APIs, data, environments, and approvals can delay delivery and increase cost.",
-            "mitigation": "Create a dependency register and make timelines contingent on client-provided access and sign-offs.",
-            "owner": "Client",
-        },
-        {
-            "risk_title": "Scope expansion after award",
-            "severity": "Medium",
-            "probability": "Medium",
-            "impact": "Broad RFP language may pull optional work into fixed-price delivery.",
-            "mitigation": "Separate mandatory scope, assumptions, exclusions, optional enhancements, and O&M pricing.",
-            "owner": "Joint",
-        },
-    ]
+            }
+        )
+    if any(term in lower for term in ("ai", "machine learning", "model", "classification", "prediction", "nlp")):
+        ai_label = _short_signal((signals["functional"] or signals["data"] or ["AI/model quality requirement"])[0])
+        risks.append(
+            {
+                "risk_title": ai_label,
+                "severity": "High",
+                "probability": "Medium",
+                "impact": f"The '{ai_label}' capability can underperform if validation data, target metrics, explainability, drift monitoring, and retraining ownership are undefined.",
+                "mitigation": f"Define validation data, thresholds, human review, error analysis, explainability, monitoring, and retraining ownership for '{ai_label}'.",
+                "owner": "Joint",
+            }
+        )
+
+    if not risks:
+        focus = _rfp_focus(analysis, raw_text)
+        risks.append(
+            {
+                "risk_title": focus,
+                "severity": "Medium",
+                "probability": "Medium",
+                "impact": f"Delivery confidence for '{focus}' will remain limited until success metrics, acceptance criteria, owners, and dependencies are confirmed.",
+                "mitigation": f"Use the first client call to convert '{focus}' into assumptions, exclusions, owner actions, acceptance tests, and dependency gates.",
+                "owner": "Joint",
+            }
+        )
+    return _dedupe_risk_cards(risks)[:8]
 
 
 def _delivery_complexity(raw_text: str, tags: list[str]) -> dict[str, Any]:
-    if _looks_like_search_nlp_opportunity(raw_text, tags):
-        search_stack = "search stack"
-        deployment_context = "deployment environment"
-        return {
-            "complexity_level": "Medium-High",
-            "why": f"The work combines NLP/search relevance, category taxonomy, {search_stack} integration, deployment constraints, and ongoing tuning.",
-            "main_complexity_drivers": [
-                "Search relevance depends on real query logs, labeled data, and catalog quality.",
-                f"{search_stack} integration must preserve current search behavior while adding query optimization.",
-                f"{deployment_context} may constrain infrastructure, model serving, observability, and security approvals.",
-                "Acceptance requires agreed relevance metrics rather than subjective search quality opinions.",
-            ],
-            "estimated_delivery_phases": [
-                "Discovery and relevance KPI baseline",
-                "Data/catalog profiling and taxonomy review",
-                "NLP query preprocessing and classification MVP",
-                f"{search_stack} API/microservice integration",
-                "Pilot measurement, tuning, and hardening",
-                "Production rollout and O&M transition",
-            ],
-            "estimated_timeline_range": "16-24 weeks for MVP/production pilot; longer for full rollout and O&M.",
-            "estimated_team_composition": [
-                "1 Solution Architect",
-                "1 Search/NLP Architect",
-                "2 NLP/ML Engineers",
-                "2 Backend/API Engineers",
-                "1 DevOps/Cloud Engineer",
-                "1 QA Engineer",
-                "1 Business Analyst/Product Owner",
-                "Optional UI/UX or relevance dashboard engineer",
-            ],
-            "dependencies": [
-                f"{search_stack} schema/version and staging access",
-                "Search logs, catalog data, and labeled category examples",
-                f"{deployment_context} constraints and approval process",
-                "Defined relevance KPIs and acceptance dataset",
-            ],
-        }
+    lower = raw_text.lower()
+    drivers = ["Scope clarity", "Acceptance criteria", "Client dependency readiness"]
+    phases = ["Discovery and assumptions validation", "Solution design", "MVP build", "Integration and UAT", "Production rollout", "Support transition"]
+    team = ["Solution Architect", "Business Analyst/Product Owner", "Backend Engineer", "QA Engineer"]
+    dependencies = ["Client access", "Source documentation", "Acceptance criteria", "Deployment environment"]
+    if any(term in lower for term in ("api", "integration", "microservice", "existing system")):
+        drivers.append("Integration/API readiness")
+        team.append("Integration Engineer")
+        dependencies.append("API documentation and sandbox access")
+    if any(term in lower for term in ("data", "migration", "report", "analytics", "database")):
+        drivers.append("Data quality and ownership")
+        team.append("Data Engineer")
+        dependencies.append("Representative data and source-system owners")
+    if any(term in lower for term in ("security", "privacy", "audit", "encryption", "access control")):
+        drivers.append("Security and compliance approval")
+        team.append("Security Engineer")
+        dependencies.append("Security-control matrix and sign-off path")
+    if _has_domain_terms(lower, {"ai", "machine learning", "model", "classification", "prediction", "nlp"}):
+        drivers.append("Model validation and monitoring")
+        team.append("AI/ML Engineer")
+        dependencies.append("Validation dataset and model acceptance metrics")
+    if any(term in lower for term in ("cloud", "hosting", "infrastructure", "deploy", "availability")):
+        drivers.append("Hosting, release, and observability constraints")
+        team.append("DevOps/Cloud Engineer")
+        dependencies.append("Approved infrastructure and release process")
+    complexity_level = "High" if len(drivers) >= 7 else "Medium-High" if len(drivers) >= 5 else "Medium"
     return {
-        "complexity_level": "Medium",
-        "why": "The RFP includes multiple delivery dependencies that need clarification before reliable estimation.",
-        "main_complexity_drivers": ["Scope ambiguity", "Integration and data readiness", "Security and UAT approvals"],
-        "estimated_delivery_phases": ["Discovery", "MVP build", "Integration/UAT", "Rollout", "Support transition"],
-        "estimated_timeline_range": "8-16 weeks depending on scope and dependency readiness.",
-        "estimated_team_composition": ["1 Solution Architect", "2 Engineers", "1 QA Engineer", "1 Business Analyst/Product Owner"],
-        "dependencies": ["Client access", "Data/API documentation", "Acceptance criteria", "Deployment environment"],
+        "complexity_level": complexity_level,
+        "why": "Complexity is driven by the number of unresolved delivery, integration, data, security, deployment, and operating-model dependencies in the RFP.",
+        "main_complexity_drivers": _dedupe(drivers)[:8],
+        "estimated_delivery_phases": phases,
+        "estimated_timeline_range": "Validate after discovery; avoid fixed dates until dependencies, acceptance gates, and operating scope are confirmed.",
+        "estimated_team_composition": _dedupe(team),
+        "dependencies": _dedupe(dependencies)[:8],
     }
 
 
-def _architecture_recommendation(raw_text: str, tags: list[str]) -> dict[str, Any]:
-    if _looks_like_search_nlp_opportunity(raw_text, tags):
-        search_stack = "existing search stack"
-        query_layer = "Search query rewriting/integration layer"
-        deployment_component = "Deployment, monitoring, logging, and model retraining pipeline"
-        search_assumption = "The client intends to augment rather than replace the existing search engine."
-        deployment_assumption = "The deployment environment allows the required runtime dependencies and model-serving approach."
-        return {
-            "direction": f"Augment the {search_stack} with an NLP-powered query optimization and category intelligence layer exposed through APIs/microservices.",
-            "components": [
-                "Query preprocessing service",
-                "NLP search string optimizer",
-                "Feature/entity extraction",
-                "Product/service category classification model",
-                "Synonym/ontology layer",
-                query_layer,
-                "Search relevance ranking and tuning layer",
-                "Feedback and analytics loop",
-                "Admin/relevance dashboard",
-                "API gateway or microservice integration",
-                deployment_component,
-            ],
-            "assumptions": [
-                search_assumption,
-                "Search logs and representative catalog data can be made available for tuning.",
-                deployment_assumption,
-            ],
-        }
+def _architecture_recommendation(
+    raw_text: str,
+    tags: list[str],
+    analysis: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    lower = raw_text.lower()
+    signals = _analysis_signals(analysis)
+    focus = _rfp_focus(analysis, raw_text)
+    components: list[str] = []
+
+    if any(term in lower for term in ("mobile", "app", "portal", "dashboard", "user", "workflow", "screen")):
+        components.append(_short_signal((signals["functional"] or [focus])[0], words=10))
+    else:
+        components.append(focus)
+
+    if signals["functional"]:
+        for item in signals["functional"][:3]:
+            components.append(_short_signal(item, words=10))
+    else:
+        components.append(f"{focus} execution service")
+
+    for item in signals["integration"][:3]:
+        components.append(_short_signal(item, words=10))
+
+    for item in signals["data"][:3]:
+        components.append(_short_signal(item, words=10))
+
+    if any(term in lower for term in ("document", "file", "upload", "pdf", "image", "storage")):
+        components.append(f"{focus} document and file storage")
+    if _has_domain_terms(lower, {"ai", "machine learning", "model", "classification", "prediction", "nlp", "search", "query"}):
+        ai_label = _short_signal((signals["functional"] or signals["data"] or ["AI/NLP processing"])[0], words=8)
+        components.append(f"{ai_label} validation and tuning")
+    if signals["non_functional"] or signals["compliance"] or any(term in lower for term in ("security", "auth", "access control", "privacy", "confidential", "audit")):
+        control_label = _short_signal((signals["non_functional"] or signals["compliance"] or ["Security and audit controls"])[0], words=8)
+        components.append(control_label)
+    if any(term in lower for term in ("notification", "email", "sms", "alert")):
+        components.append(f"{focus} notifications and escalations")
+    if any(term in lower for term in ("cloud", "hosting", "deploy", "availability", "monitoring", "support", "o&m", "maintain")):
+        ops_label = _short_signal((signals["scope"] or signals["non_functional"] or ["hosting, monitoring, and support"])[0], words=8)
+        components.append(ops_label)
+
+    assumptions = [
+        f"Architecture is based on the extracted focus: {focus}.",
+        "Final component boundaries depend on confirmed source systems, environments, security controls, data ownership, and acceptance tests.",
+    ]
+    if signals["integration"]:
+        assumptions.append(f"Integration design assumes client confirmation for: {_short_signal(signals['integration'][0], words=12)}.")
+    if signals["data"]:
+        assumptions.append(f"Data design assumes owner and quality confirmation for: {_short_signal(signals['data'][0], words=12)}.")
+    if signals["non_functional"] or signals["compliance"]:
+        assumptions.append(f"Control design assumes sign-off requirements for: {_short_signal((signals['non_functional'] or signals['compliance'])[0], words=12)}.")
+
     return {
-        "direction": "Use a modular delivery architecture that separates core workflow, data, integration, security, and operations concerns.",
-        "components": ["API layer", "Application services", "Data layer", "Integration adapters", "Monitoring and audit logging"],
-        "assumptions": ["Detailed architecture depends on source systems, hosting model, security controls, and acceptance criteria."],
+        "direction": f"Architecture for {focus} should be built around the RFP's named capabilities, confirmed integrations, data ownership, controls, and operating obligations.",
+        "components": _dedupe(components)[:14],
+        "assumptions": _dedupe(assumptions)[:8],
     }
+
+
+def _architecture_detail(raw_text: str, analysis: dict[str, Any]) -> dict[str, Any]:
+    signals = _analysis_signals(analysis)
+    focus = _rfp_focus(analysis, raw_text)
+    recommendation = _architecture_recommendation(raw_text, analysis.get("domain_tags", []), analysis)
+
+    functional = [_short_signal(item, words=12) for item in signals["functional"][:4]]
+    integrations = [_short_signal(item, words=12) for item in signals["integration"][:4]]
+    data_needs = [_short_signal(item, words=12) for item in signals["data"][:4]]
+    controls = [_short_signal(item, words=12) for item in [*signals["non_functional"], *signals["compliance"]][:4]]
+    scope = [_short_signal(item, words=12) for item in signals["scope"][:3]]
+
+    business_view = _dedupe(
+        [
+            f"Business outcome: use {focus} to solve the operating problem described in the RFP, with success measured by client-confirmed outcomes rather than tender compliance alone.",
+            *[f"Call angle: confirm which business owner signs off the value of '{item}'." for item in functional[:2]],
+            "Decision posture: treat architecture as a qualified direction until the client confirms users, data ownership, integrations, controls, and acceptance criteria.",
+        ]
+    )[:6]
+
+    technical_view = _dedupe(
+        [
+            f"Experience and workflow capability for {focus}, scoped around the named user journeys and release-one behavior.",
+            *[f"Domain service or module: {item}." for item in functional[:3]],
+            *[f"Integration adapter boundary: {item}." for item in integrations[:3]],
+            *[f"Data/reporting responsibility: {item}." for item in data_needs[:3]],
+            *[f"Control plane requirement: {item}." for item in controls[:2]],
+        ]
+    )[:10]
+
+    data_flow = _dedupe(
+        [
+            f"Intake: capture or receive inputs needed for {focus} from the buyer's confirmed channels.",
+            *[f"Source data path: profile, validate, and reconcile '{item}' before acceptance." for item in data_needs[:3]],
+            "Output path: expose dashboards, reports, APIs, notifications, or operational views only where the RFP names them or the client confirms them.",
+        ]
+    )[:7]
+
+    integration_flow = _dedupe(
+        [
+            *[f"Connect '{item}' through a documented contract, sandbox, owner, test data, error handling, and release gate." for item in integrations[:4]],
+            "Keep external systems behind adapters so proposal scope is not coupled to undocumented APIs or late client access.",
+        ]
+    )[:7]
+
+    security_operations = _dedupe(
+        [
+            *[f"Design-time control: {item} needs a reviewer, evidence format, test method, remediation window, and sign-off path." for item in controls[:4]],
+            *[f"Operating scope: separate build, warranty, monitoring, support, tuning, and change-request obligations for '{item}'." for item in scope[:2]],
+            "Observability should cover workflow health, integration failures, data-quality exceptions, security events, and support handoff readiness.",
+        ]
+    )[:8]
+
+    decision_points = _dedupe(
+        [
+            "Architecture style: modular service-led design with explicit adapters, governed data responsibilities, and observable release gates.",
+            "MVP boundary: choose the smallest release that proves the buyer's priority workflow and measurable outcome.",
+            "Integration strategy: do not commit effort until API contracts, payloads, environments, owners, and testing windows are available.",
+            "Data strategy: assign source owners, quality thresholds, migration/reconciliation rules, and reporting definitions before build estimates.",
+            "Control strategy: make security, audit, hosting, UAT, and production approvals part of the delivery plan from day one.",
+        ]
+    )[:7]
+
+    call_prep_questions = _dedupe(
+        [
+            f"Which stakeholder owns success metrics and final sign-off for {focus}?",
+            *[f"What release-one behavior, exclusions, UAT data, and acceptance evidence define '{item}'?" for item in functional[:2]],
+            *[f"Who owns the interface contract, sandbox, payload examples, and test window for '{item}'?" for item in integrations[:2]],
+            *[f"Who owns source quality, reconciliation, retention, and reporting definitions for '{item}'?" for item in data_needs[:2]],
+            *[f"What evidence and approval path prove '{item}' before go-live?" for item in controls[:2]],
+        ]
+    )[:8]
+
+    return {
+        **recommendation,
+        "business_view": business_view,
+        "technical_view": technical_view,
+        "data_flow": data_flow,
+        "integration_flow": integration_flow,
+        "security_operations": security_operations,
+        "decision_points": decision_points,
+        "call_prep_questions": call_prep_questions,
+    }
+
+
+def _analysis_query(analysis: dict[str, Any]) -> str:
+    parts = [
+        str(analysis.get("business_problem") or ""),
+        " ".join(str(item) for item in analysis.get("functional_requirements", [])[:5]),
+        " ".join(str(item) for item in analysis.get("integration_needs", [])[:4]),
+        " ".join(str(item) for item in analysis.get("data_needs", [])[:4]),
+        " ".join(str(item) for item in analysis.get("domain_tags", [])[:8]),
+    ]
+    return " ".join(part for part in parts if part).strip()[:1800]
+
+
+def _evidence_terms(analysis: dict[str, Any]) -> set[str]:
+    source = " ".join(
+        [
+            str(analysis.get("business_problem") or ""),
+            " ".join(str(item) for item in analysis.get("functional_requirements", [])[:6]),
+            " ".join(str(item) for item in analysis.get("integration_needs", [])[:5]),
+            " ".join(str(item) for item in analysis.get("data_needs", [])[:5]),
+            " ".join(str(item) for item in analysis.get("domain_tags", [])[:8]),
+        ]
+    )
+    return {
+        token
+        for token in re.findall(r"[a-zA-Z][a-zA-Z0-9+-]{3,}", source.lower())
+        if token not in _EVIDENCE_STOPWORDS and not token.isdigit()
+    }
+
+
+def _knowledge_evidence_from_matches(matches: list[dict[str, Any]], analysis: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    query_terms = _evidence_terms(analysis or {})
+    evidence: list[dict[str, Any]] = []
+    for match in matches[:6]:
+        title = str(match.get("title") or "Internal knowledge item").strip()
+        text = _strip_reference_noise(str(match.get("text") or ""))
+        if not text:
+            continue
+        score = round(float(match.get("score") or 0), 3)
+        haystack = f"{title} {text} {' '.join(str(item) for item in match.get('tags') or [])} {' '.join(str(item) for item in match.get('tech_stack') or [])}".lower()
+        overlap = {term for term in query_terms if term in haystack}
+        if score < 0.45:
+            continue
+        if query_terms and score < 0.68 and len(overlap) < 3:
+            continue
+        if query_terms and not overlap:
+            continue
+        evidence.append(
+            {
+                "title": title,
+                "domain": match.get("domain") or "unknown",
+                "item_type": match.get("item_type") or "project",
+                "score": score,
+                "why_relevant": text[:420],
+                "tech_stack": match.get("tech_stack") or [],
+                "tags": match.get("tags") or [],
+            }
+        )
+    return evidence
+
+
+def _sentiment_analysis(analysis: dict[str, Any], raw_text: str) -> dict[str, Any]:
+    tags = analysis.get("domain_tags", [])
+    requirements = analysis.get("functional_requirements", [])
+    integrations = analysis.get("integration_needs", [])
+    data_needs = analysis.get("data_needs", [])
+    missing = analysis.get("missing_information", [])
+    risks = analysis.get("timeline_risks", [])
+    positive_count = len(requirements) + len(tags)
+    concern_count = len(integrations) + len(data_needs) + len(missing) + len(risks)
+    if concern_count >= positive_count + 6:
+        posture = "Cautious"
+    elif positive_count >= concern_count:
+        posture = "Constructive"
+    else:
+        posture = "Selective"
+    focus = _rfp_focus(analysis, raw_text)
+    points = [
+        {
+            "title": focus,
+            "insight": str(analysis.get("business_problem") or f"The document describes {focus}, but the buyer outcome needs clarification."),
+            "evidence": _joined(requirements, str(analysis.get("business_problem") or ""), limit=1),
+            "implication": "Open the client call by validating the business outcome and executive success metric before discussing effort or commercials.",
+        },
+    ]
+    for item in _specific_items(requirements, limit=3):
+        label = _short_signal(item)
+        points.append(
+            {
+                "title": label,
+                "insight": f"The RFP explicitly points to '{label}', so the discussion should clarify first-release behavior, acceptance evidence, and owner sign-off.",
+                "evidence": item[:260],
+                "implication": "Separate mandatory scope, optional scope, client-owned dependencies, and proposal assumptions for this requirement.",
+            }
+        )
+    if integrations:
+        label = _short_signal(integrations[0])
+        points.append(
+            {
+                "title": label,
+                "insight": f"The '{label}' integration appears material to delivery success.",
+                "evidence": _joined(integrations, "Integration needs are referenced in the RFP.", limit=2),
+                "implication": "Do not commit fixed dates until interfaces, owners, environments, and test windows are confirmed.",
+            }
+        )
+    if data_needs:
+        label = _short_signal(data_needs[0])
+        points.append(
+            {
+                "title": label,
+                "insight": f"The '{label}' data requirement can affect delivery confidence and acceptance.",
+                "evidence": _joined(data_needs, "Data needs are referenced in the RFP.", limit=2),
+                "implication": "Ask for representative data, source-system ownership, quality constraints, and reconciliation responsibilities.",
+            }
+        )
+    if any(term in raw_text.lower() for term in ("security", "confidential", "privacy", "audit", "encryption", "access control")):
+        control = _short_signal((_specific_items(analysis.get("non_functional_requirements"), limit=1) or _specific_items(analysis.get("compliance_needs"), limit=1) or ["security/audit controls"])[0])
+        points.append(
+            {
+                "title": control,
+                "insight": f"The '{control}' expectation should be treated as an architecture and go-live constraint.",
+                "evidence": _evidence_for(raw_text, {"security", "confidential", "privacy", "audit", "encryption", "access control"}, "Security/governance terms are present in the RFP."),
+                "implication": "Confirm mandatory controls, sign-off authority, audit evidence, and production readiness gates early.",
+            }
+        )
+    return {
+        "overall_sentiment": posture,
+        "summary": f"{focus} is a {posture.lower()} opportunity. The RFP gives enough signal to plan discovery, but commitments should depend on the specific requirements, integrations, data, controls, and acceptance gates extracted from this document.",
+        "confidence": "medium" if raw_text and len(raw_text) > 1500 else "low",
+        "points": points[:6],
+        "recommended_posture": f"Proceed with executive discovery for {focus}; avoid price, timeline, and final architecture commitments until the named assumptions are validated.",
+    }
+
+
+def _must_ask_question_cards(
+    raw_text: str,
+    tags: list[str],
+    analysis: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
+    questions = _missing_information_questions(raw_text, tags, analysis)
+    cards: list[dict[str, str]] = []
+    for question in questions[:10]:
+        lower = question.lower()
+        category = "Discovery"
+        why = "This changes delivery confidence, pricing, timeline, architecture, or acceptance risk for this specific RFP."
+        assumption = "The client can confirm this from source-system owners, business owners, delivery owners, or sign-off authorities before proposal commitment."
+        if any(term in lower for term in ("test", "testing", "uat", "regression", "defect")):
+            category = "Testing and acceptance"
+            why = "Testing ownership and acceptance evidence determine when the migrated application can be considered complete."
+            assumption = "The buyer has named UAT owners, representative test data, defect triage rules, and sign-off criteria."
+        elif any(term in lower for term in ("upgrade", "release", "version", "branching", "promotion")):
+            category = "Release governance"
+            why = "The upgrade process affects ongoing delivery velocity, operational risk, and post-migration support obligations."
+            assumption = "The buyer can confirm release approvals, build process, rollback expectations, and production promotion gates."
+        elif any(term in lower for term in ("aws", "host", "infrastructure", "environment", "cutover", "rollback")):
+            category = "Cloud migration"
+            why = "Hosting, access, dependency, cutover, and rollback details decide whether the migration can be estimated safely."
+            assumption = "The buyer can provide current environment details, cloud/network constraints, access path, migration window, and rollback authority."
+        elif any(term in lower for term in ("security", "confidential", "cpra", "compliance", "go-live evidence", "sign-off gate")):
+            category = "Security and compliance"
+            why = "Security and statutory obligations can block go-live or change the delivery approach if evidence expectations are unclear."
+            assumption = "The buyer can identify mandatory controls, legal/compliance reviewers, evidence format, and remediation windows."
+        elif any(term in lower for term in ("out of scope", "support", "o&m", "buyer-owned")):
+            category = "Scope and operations"
+            why = "Scope boundaries prevent implementation work from becoming open-ended support, consulting, or unmanaged change requests."
+            assumption = "The buyer can separate initial migration/build work from support, maintenance, enhancements, and buyer-owned responsibilities."
+        cards.append(
+            {
+                "category": category,
+                "question": question,
+                "why_it_matters": why,
+                "assumption_to_validate": assumption,
+            }
+        )
+    return cards
+
+
+def _talking_points(
+    report: dict[str, Any],
+    analysis: dict[str, Any] | None = None,
+    raw_text: str = "",
+) -> list[dict[str, str]]:
+    signals = _analysis_signals(analysis)
+    focus = _rfp_focus(analysis, raw_text)
+    source_points: list[str] = [
+        f"{focus}: agree the business outcome, success metric, and buyer decision owner before effort is discussed.",
+    ]
+    for item in signals["functional"][:2]:
+        label = _short_signal(item)
+        source_points.append(f"{label}: pin down release-one behavior, exclusions, UAT evidence, and sign-off owner.")
+    for item in signals["integration"][:2]:
+        label = _short_signal(item)
+        source_points.append(f"{label}: ask for the interface contract, environment access, owner, payloads, and test window.")
+    for item in signals["data"][:2]:
+        label = _short_signal(item)
+        source_points.append(f"{label}: confirm source owner, data quality, migration responsibility, and reconciliation rule.")
+    for item in [*signals["non_functional"][:1], *signals["compliance"][:1]]:
+        label = _short_signal(item)
+        source_points.append(f"{label}: identify the reviewer, evidence format, remediation SLA, and production sign-off path.")
+    prep = report.get("prospect_call_prep", {}) if isinstance(report.get("prospect_call_prep"), dict) else {}
+    if len(source_points) < 5:
+        source_points.extend(prep.get("strongest_talking_points") or report.get("win_strategy") or [])
+    points: list[dict[str, str]] = []
+    for point in _dedupe([str(item) for item in source_points])[:7]:
+        lower = point.lower()
+        client_angle = f"Use this to keep the call centered on the buyer's actual '{focus}' decision, not generic tender compliance."
+        proof_needed = "Use the RFP phrase behind this point, a named client clarification, or a verified internal evidence item before proposal submission."
+        if any(term in lower for term in ("business outcome", "success metric", "decision owner")):
+            client_angle = "Start at executive value: why the buyer needs this migration or modernization now, what business risk it reduces, and who owns success."
+            proof_needed = "Client-confirmed success metric, decision owner, target operating outcome, and current pain caused by the existing application setup."
+        elif any(term in lower for term in ("uat", "sign-off", "release-one", "testing", "validation")):
+            client_angle = "Move the conversation from task completion to acceptance: what evidence proves the migrated environment is ready."
+            proof_needed = "Acceptance criteria, UAT owner, regression scope, test data readiness, defect severity rules, and final sign-off authority."
+        elif any(term in lower for term in ("security", "confidential", "reviewer", "evidence format")):
+            client_angle = "Position security and CPRA compliance as go-live design constraints, not late-stage paperwork."
+            proof_needed = "Mandatory controls, reviewer names, audit/security evidence, remediation windows, and confidentiality handling expectations."
+        elif any(term in lower for term in ("client-owned", "dependencies", "price", "timeline")):
+            client_angle = "Make buyer-owned dependencies visible before discussing price, timeline, staffing, or fixed-scope commitments."
+            proof_needed = "Dependency owner list, access dates, environment readiness, decision SLAs, and change-control triggers."
+        points.append(
+            {
+                "point": point,
+                "client_angle": client_angle,
+                "proof_needed": proof_needed,
+            }
+        )
+    return points
+
+
+def _narrative_from_evidence(analysis: dict[str, Any], evidence: list[dict[str, Any]], raw_text: str = "") -> dict[str, Any]:
+    focus = _rfp_focus(analysis, raw_text)
+    primary = evidence[0] if evidence else {}
+    title = str(primary.get("title") or "").strip()
+    if not title:
+        return {
+            "title": f"Evidence gap for {focus}",
+            "story": (
+                f"For {focus}, do not claim a past-project proof story until the knowledge base returns a defensible match. "
+                "Lead the client conversation with the RFP's named capabilities, the assumptions that need owner confirmation, "
+                "and the architecture choices that remain conditional on integrations, data, controls, and acceptance gates."
+            ),
+            "how_it_helps": [
+                f"Keeps the {focus} conversation credible for C-suite stakeholders.",
+                "Prevents unsupported internal-project claims from entering the pursuit narrative.",
+                "Creates a clean follow-up action: attach the closest verified case study only after the knowledge base provides one.",
+            ],
+            "evidence_project_title": "",
+            "confidence": "low",
+        }
+    domain = primary.get("domain") or "similar"
+    return {
+        "title": f"{title} relevance to {focus}",
+        "story": (
+            f"Position {title} only where it directly supports {focus}. "
+            f"The useful comparison is the {domain} delivery pattern described in the knowledge base: convert unclear requirements into governed workstreams, "
+            "make integrations and data ownership explicit, and use reusable architecture or operating practices only where the current RFP has matching evidence. "
+            f"For {focus}, this helps the call stay proof-led without overstating similarity."
+        ),
+        "how_it_helps": [
+            str(primary.get("why_relevant") or "Relevant implementation evidence from the internal knowledge base.")[:260],
+            f"Turns the {focus} call into a proof-backed discussion around delivery risk, not only features.",
+            "Keeps the bridge from past execution to this RFP tied to verified overlap rather than a generic success story.",
+        ],
+        "evidence_project_title": title,
+        "confidence": "medium" if float(primary.get("score") or 0) < 0.7 else "high",
+    }
+
+
+def _fallback_architecture_text(raw_text: str, analysis: dict[str, Any]) -> str:
+    recommendation = _architecture_detail(raw_text, analysis)
+    components = [str(item) for item in recommendation.get("components", [])]
+    node_names = [
+        re.sub(r"[^A-Za-z0-9]+", "_", component).strip("_")[:36] or f"Component_{index + 1}"
+        for index, component in enumerate(components[:10])
+    ]
+    if len(node_names) < 2:
+        node_names = ["Intake", "Application_Services", "Data_Layer", "Monitoring"]
+    diagram_lines = ["graph TD"]
+    for left, right in zip(node_names, node_names[1:]):
+        diagram_lines.append(f"{left} --> {right}")
+    return "\n".join(
+        [
+            str(recommendation.get("direction") or ""),
+            "Flow:",
+            "\n".join(f"- {component}" for component in components[:10]),
+            "Mermaid:",
+            *diagram_lines,
+        ]
+    )
+
+
+def _extract_mermaid(architecture_text: str) -> str:
+    lines = architecture_text.splitlines()
+    start = next((index for index, line in enumerate(lines) if line.strip().lower() == "graph td"), -1)
+    if start < 0:
+        return ""
+    diagram: list[str] = []
+    for line in lines[start:]:
+        stripped = line.strip()
+        if not stripped:
+            if diagram:
+                break
+            continue
+        if diagram and stripped.upper().startswith("TASK "):
+            break
+        diagram.append(stripped)
+    return "\n".join(diagram)
+
+
+_RFP_INTELLIGENCE_SYSTEM_PROMPT = """
+You are a principal pre-sales architect and executive pursuit strategist.
+
+Create the RFP Analysis page content for C-suite users. Use only the extracted
+facts, retrieved knowledge evidence, and quoted RFP excerpt. Do not invent
+client facts, integrations, budgets, dates, products, certifications, or past
+projects.
+
+Critical rules:
+- Every card heading must be specific to this RFP. Do not use generic headings
+  like "Integration readiness", "Data readiness", "Scope clarity", "Control
+  sign-off", "Opportunity signal", "Leadership concern", or "Client dependency".
+- If a section item cannot point to a specific RFP phrase, do not include it.
+- Questions must ask about named assumptions from this RFP.
+- Risks must be concrete, named after the actual requirement/dependency, and
+  explain why that exact item threatens delivery, pricing, acceptance, or go-live.
+- Talking points must sound like directors preparing for a client call, not
+  generic project-management advice.
+- Narrative must use retrieved knowledge only when the overlap is defensible;
+  otherwise state that no strong internal evidence match is available.
+- Architecture must help a client-call team. Include executive-readable
+  business implications and technically specific design detail. Components must
+  be named after the actual product modules, integrations, data stores, control
+  gates, or operations responsibilities in the RFP. Avoid generic layer names.
+- Architecture business_view, technical_view, data_flow, integration_flow,
+  security_operations, decision_points, and call_prep_questions must not repeat
+  the Must-Ask Questions, Top Risks, Talking Points, or Narrative wording.
+- Return valid JSON only.
+"""
+
+
+async def _generate_llm_rfp_intelligence(
+    raw_text: str,
+    analysis: dict[str, Any],
+    knowledge_evidence: list[dict[str, Any]],
+    *,
+    regenerate: bool = False,
+) -> dict[str, Any] | None:
+    llm_service = get_llm_service()
+    clipped_text = raw_text[:6_000]
+    evidence_text = "\n".join(
+        f"- {item.get('title')} ({item.get('domain')}, score={item.get('score')}): {item.get('why_relevant')}"
+        for item in knowledge_evidence[:5]
+    ) or "No sufficiently relevant internal knowledge evidence was retrieved."
+    user_content = f"""
+Build the complete RFP Analysis intelligence object.
+
+Extracted RFP facts:
+business_problem: {analysis.get("business_problem")}
+functional_requirements: {analysis.get("functional_requirements", [])[:8]}
+non_functional_requirements: {analysis.get("non_functional_requirements", [])[:6]}
+data_needs: {analysis.get("data_needs", [])[:6]}
+integration_needs: {analysis.get("integration_needs", [])[:6]}
+compliance_needs: {analysis.get("compliance_needs", [])[:6]}
+timeline_risks: {analysis.get("timeline_risks", [])[:6]}
+missing_information: {analysis.get("missing_information", [])[:8]}
+scope_boundaries: {analysis.get("scope_boundaries", [])[:6]}
+domain_tags: {analysis.get("domain_tags", [])}
+estimated_complexity: {analysis.get("estimated_complexity")}
+
+Retrieved internal knowledge evidence:
+{evidence_text}
+
+Regeneration instruction:
+{"This is a regeneration. Improve specificity, vary the framing, and focus on the most decision-critical facts without changing the evidence." if regenerate else "This is the first generation. Be concise, specific, and source-grounded."}
+
+RFP excerpt:
+<rfp>
+{clipped_text}
+</rfp>
+"""
+    try:
+        result: RFPIntelligenceOutput = await llm_service.structured_extract(
+            system_prompt=_RFP_INTELLIGENCE_SYSTEM_PROMPT,
+            user_content=user_content,
+            output_schema=RFPIntelligenceOutput,
+            temperature=0.15 if regenerate else 0.02,
+            model_name=settings.RFP_ANALYSIS_MODEL,
+        )
+        payload = result.model_dump()
+        if (
+            payload.get("sentiment_analysis", {}).get("summary")
+            and payload.get("must_ask_questions")
+            and payload.get("top_risks")
+            and payload.get("talking_points")
+            and payload.get("architecture", {}).get("components")
+        ):
+            return payload
+    except Exception as exc:
+        logger.warning(f"RFP intelligence LLM generation unavailable; using evidence fallback: {exc}")
+    return None
+
+
+def _tab_text_key(value: Any) -> str:
+    text = str(value or "")
+    text = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+    return text
+
+
+def _is_repeated_tab_text(key: str, seen: set[str]) -> bool:
+    if not key:
+        return True
+    if key in seen:
+        return True
+    if len(key) < 18:
+        return False
+    return any(key in existing or existing in key for existing in seen if min(len(key), len(existing)) >= 32)
+
+
+def _dedupe_dict_cards(cards: Any, text_fields: tuple[str, ...], seen: set[str], *, limit: int) -> list[dict[str, Any]]:
+    if not isinstance(cards, list):
+        return []
+    output: list[dict[str, Any]] = []
+    for card in cards:
+        if not isinstance(card, dict):
+            continue
+        key_source = " ".join(str(card.get(field) or "") for field in text_fields)
+        key = _tab_text_key(key_source)
+        if _is_repeated_tab_text(key, seen):
+            continue
+        seen.add(key)
+        output.append(card)
+        if len(output) >= limit:
+            break
+    return output
+
+
+def _dedupe_string_items(items: Any, seen: set[str], *, limit: int, cross_tab: bool = False) -> list[str]:
+    if not isinstance(items, list):
+        return []
+    output: list[str] = []
+    local_seen: set[str] = set()
+    for item in items:
+        text = str(item or "").strip()
+        key = _tab_text_key(text)
+        target_seen = seen if cross_tab else local_seen
+        if _is_repeated_tab_text(key, target_seen):
+            continue
+        target_seen.add(key)
+        output.append(text)
+        if len(output) >= limit:
+            break
+    return output
+
+
+def _dedupe_intelligence_tabs(intelligence: dict[str, Any]) -> dict[str, Any]:
+    """Remove repeated card text while preserving the tab contract."""
+    seen: set[str] = set()
+    intelligence["must_ask_questions"] = _dedupe_dict_cards(
+        intelligence.get("must_ask_questions"),
+        ("question", "assumption_to_validate"),
+        seen,
+        limit=10,
+    )
+    intelligence["top_risks"] = _dedupe_dict_cards(
+        intelligence.get("top_risks"),
+        ("risk_title", "impact"),
+        seen,
+        limit=8,
+    )
+    intelligence["talking_points"] = _dedupe_dict_cards(
+        intelligence.get("talking_points"),
+        ("point", "client_angle"),
+        seen,
+        limit=7,
+    )
+
+    narrative = intelligence.get("narrative")
+    if isinstance(narrative, dict):
+        narrative["how_it_helps"] = _dedupe_string_items(narrative.get("how_it_helps"), seen, limit=5)
+
+    evidence = intelligence.get("relevant_knowledge_evidence")
+    if isinstance(evidence, list):
+        evidence_seen: set[str] = set()
+        filtered_evidence = []
+        for item in evidence:
+            if not isinstance(item, dict):
+                continue
+            key = _tab_text_key(f"{item.get('title')} {item.get('why_relevant')}")
+            if _is_repeated_tab_text(key, evidence_seen):
+                continue
+            evidence_seen.add(key)
+            filtered_evidence.append(item)
+            if len(filtered_evidence) >= 6:
+                break
+        intelligence["relevant_knowledge_evidence"] = filtered_evidence
+
+    architecture = intelligence.get("architecture")
+    if isinstance(architecture, dict):
+        for key, limit in (
+            ("components", 14),
+            ("assumptions", 8),
+            ("business_view", 6),
+            ("technical_view", 10),
+            ("data_flow", 7),
+            ("integration_flow", 7),
+            ("security_operations", 8),
+            ("decision_points", 7),
+            ("call_prep_questions", 8),
+        ):
+            architecture[key] = _dedupe_string_items(
+                architecture.get(key),
+                seen,
+                limit=limit,
+                cross_tab=key != "components",
+            )
+    return intelligence
+
+
+def _build_rfp_intelligence(
+    analysis: dict[str, Any],
+    raw_text: str,
+    report: dict[str, Any],
+    *,
+    knowledge_matches: list[dict[str, Any]] | None = None,
+    architecture_text: str | None = None,
+    architecture_generated_by: str = "deterministic_fallback",
+    intelligence_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    evidence = _knowledge_evidence_from_matches(knowledge_matches or [], analysis)
+    architecture_output = architecture_text or _fallback_architecture_text(raw_text, analysis)
+    recommendation = _architecture_detail(raw_text, analysis)
+    if intelligence_override:
+        architecture_candidate = intelligence_override.get("architecture")
+        architecture: dict[str, Any] = architecture_candidate if isinstance(architecture_candidate, dict) else {}
+        intelligence = {
+            "sentiment_analysis": intelligence_override.get("sentiment_analysis") or _sentiment_analysis(analysis, raw_text),
+            "must_ask_questions": intelligence_override.get("must_ask_questions") or _must_ask_question_cards(raw_text, analysis.get("domain_tags", []), analysis),
+            "top_risks": intelligence_override.get("top_risks") or _risk_assessment(raw_text, analysis.get("domain_tags", []), analysis),
+            "talking_points": intelligence_override.get("talking_points") or _talking_points(report, analysis, raw_text),
+            "narrative": intelligence_override.get("narrative") or _narrative_from_evidence(analysis, evidence, raw_text),
+            "relevant_knowledge_evidence": evidence,
+            "architecture": {
+                "summary": architecture.get("summary") or recommendation.get("direction") or "",
+                "components": architecture.get("components") or recommendation.get("components") or [],
+                "assumptions": architecture.get("assumptions") or recommendation.get("assumptions") or [],
+                "business_view": architecture.get("business_view") or recommendation.get("business_view") or [],
+                "technical_view": architecture.get("technical_view") or recommendation.get("technical_view") or [],
+                "data_flow": architecture.get("data_flow") or recommendation.get("data_flow") or [],
+                "integration_flow": architecture.get("integration_flow") or recommendation.get("integration_flow") or [],
+                "security_operations": architecture.get("security_operations") or recommendation.get("security_operations") or [],
+                "decision_points": architecture.get("decision_points") or recommendation.get("decision_points") or [],
+                "call_prep_questions": architecture.get("call_prep_questions") or recommendation.get("call_prep_questions") or [],
+                "architecture_text": architecture_output,
+                "mermaid": _extract_mermaid(architecture_output),
+                "generated_by": architecture_generated_by,
+            },
+        }
+        return _dedupe_intelligence_tabs(intelligence)
+    intelligence = {
+        "sentiment_analysis": _sentiment_analysis(analysis, raw_text),
+        "must_ask_questions": _must_ask_question_cards(raw_text, analysis.get("domain_tags", []), analysis),
+        "top_risks": _risk_assessment(raw_text, analysis.get("domain_tags", []), analysis),
+        "talking_points": _talking_points(report, analysis, raw_text),
+        "narrative": _narrative_from_evidence(analysis, evidence, raw_text),
+        "relevant_knowledge_evidence": evidence,
+        "architecture": {
+            "summary": recommendation.get("direction") or "",
+            "components": recommendation.get("components") or [],
+            "assumptions": recommendation.get("assumptions") or [],
+            "business_view": recommendation.get("business_view") or [],
+            "technical_view": recommendation.get("technical_view") or [],
+            "data_flow": recommendation.get("data_flow") or [],
+            "integration_flow": recommendation.get("integration_flow") or [],
+            "security_operations": recommendation.get("security_operations") or [],
+            "decision_points": recommendation.get("decision_points") or [],
+            "call_prep_questions": recommendation.get("call_prep_questions") or [],
+            "architecture_text": architecture_output,
+            "mermaid": _extract_mermaid(architecture_output),
+            "generated_by": architecture_generated_by,
+        },
+    }
+    return _dedupe_intelligence_tabs(intelligence)
+
+
+def _build_architecture_generation_prompt(raw_text: str, analysis: dict[str, Any]) -> str:
+    requirement = "\n".join(
+        [
+            str(analysis.get("business_problem") or ""),
+            "Functional requirements:",
+            "\n".join(f"- {item}" for item in analysis.get("functional_requirements", [])[:8]),
+            "Integration needs:",
+            "\n".join(f"- {item}" for item in analysis.get("integration_needs", [])[:6]),
+            "Data needs:",
+            "\n".join(f"- {item}" for item in analysis.get("data_needs", [])[:6]),
+            "Security/compliance needs:",
+            "\n".join(f"- {item}" for item in analysis.get("compliance_needs", [])[:6]),
+            "Missing assumptions:",
+            "\n".join(f"- {item}" for item in analysis.get("missing_information", [])[:8]),
+        ]
+    ).strip()
+    source_excerpt = raw_text[:8000]
+    return f"""
+You are preparing ProposalPilot's architecture brief for an executive discovery call.
+
+Use only the RFP facts below. Do not add vendors, external systems, cloud products,
+certifications, budgets, dates, or user groups unless the RFP explicitly supports them.
+If a cloud service is not dictated by the RFP, write "cloud_service: " with no value.
+
+Extracted opportunity facts:
+{requirement}
+
+Source RFP excerpt:
+{source_excerpt}
+
+Return plain text only. No JSON. No markdown fences. Use this exact section order:
+
+ARCHITECTURE CALL BRIEF
+State the recommended architecture direction in 5 to 8 lines. Explain it for
+both executives and technical reviewers.
+
+BUSINESS OPERATING VIEW
+- Map the architecture to the buyer's outcome, users, process ownership, and
+  acceptance responsibility.
+- Include only RFP-supported facts and clearly mark unknowns as assumptions.
+
+TECHNICAL BLUEPRINT
+- Describe the module boundaries, APIs/adapters, data responsibilities,
+  security/control points, observability, and support handoff.
+- Be specific to this RFP's named capabilities.
+
+PRIMARY FLOW
+Use a compact text flow from intake to processing, integration/data, outputs,
+acceptance, monitoring, and support. Include short labels on transitions.
+
+DESIGN DECISIONS FOR THE CALL
+- List 5 to 7 decisions the team must validate before pricing or committing.
+
+COMPONENT REGISTER
+For each component include exactly:
+component:
+name: ...
+type: lowercase_snake_case
+cloud_service:
+description: ...
+call_question: ...
+
+MERMAID
+graph TD
+A --> B
+""".strip()
+
+
+async def _generate_architecture_output(raw_text: str, analysis: dict[str, Any]) -> tuple[str, str]:
+    llm_service = get_llm_service()
+    try:
+        text = await llm_service.complete(
+            system_prompt=(
+                "You are ProposalPilot's principal solution architect. Produce call-prep architecture outputs that are grounded only in the RFP. "
+                "Explain design implications clearly for executives and technical reviewers. Never invent product names or client facts."
+            ),
+            user_content=_build_architecture_generation_prompt(raw_text, analysis),
+            temperature=0.15,
+            model_name=settings.ARCHITECTURE_MODEL,
+        )
+        if "ARCHITECTURE CALL BRIEF" in text and "graph TD" in text:
+            return text, settings.ARCHITECTURE_MODEL
+    except Exception as exc:
+        logger.warning(f"Architecture model generation unavailable; using deterministic fallback: {exc}")
+    return _fallback_architecture_text(raw_text, analysis), "deterministic_fallback"
+
+
+async def _enrich_rfp_intelligence(raw_text: str, payload: dict[str, Any], *, regenerate: bool = False) -> dict[str, Any]:
+    report = payload.get("raw_llm_output", {}).get("executive_report", {})
+    knowledge_matches: list[dict[str, Any]] = []
+    query = _analysis_query(payload)
+    if query:
+        try:
+            from app.services import knowledge_service
+
+            knowledge_matches = await knowledge_service.search_knowledge(query, limit=8)
+        except Exception as exc:
+            logger.warning(f"Knowledge retrieval unavailable during RFP analysis enrichment: {exc}")
+
+    evidence = _knowledge_evidence_from_matches(knowledge_matches, payload)
+    intelligence_override = await _generate_llm_rfp_intelligence(
+        raw_text,
+        payload,
+        evidence,
+        regenerate=regenerate,
+    )
+    if intelligence_override is None:
+        meta = payload.get("raw_llm_output", {}).get("extraction_meta")
+        if isinstance(meta, dict):
+            meta["warnings"] = _dedupe(
+                [
+                    *[str(item) for item in meta.get("warnings", [])],
+                    "RFP intelligence model unavailable; returned source-extracted fallback cards.",
+                ]
+            )[:5]
+    architecture_text, architecture_generated_by = await _generate_architecture_output(raw_text, payload)
+    payload["raw_llm_output"]["rfp_intelligence"] = _build_rfp_intelligence(
+        payload,
+        raw_text,
+        report if isinstance(report, dict) else {},
+        knowledge_matches=knowledge_matches,
+        architecture_text=architecture_text,
+        architecture_generated_by=architecture_generated_by,
+        intelligence_override=intelligence_override,
+    )
+    return payload
 
 
 def _commercial_intelligence(raw_text: str, tags: list[str]) -> dict[str, Any]:
-    if _looks_like_search_nlp_opportunity(raw_text, tags):
-        search_stack = "search stack"
-        deployment_context = "deployment environment"
-        return {
-            "estimate_disclaimer": f"Directional executive estimate only; validate after discovery, data audit, {search_stack} architecture review, and O&M scope confirmation.",
-            "estimated_project_size_range": "INR 1.5 Cr - INR 3 Cr depending on MVP, rollout breadth, and O&M duration.",
-            "estimated_delivery_cost_range": "INR 80L - INR 1.5 Cr depending on team duration, data preparation, deployment constraints, and support commitments.",
-            "margin_attractiveness": f"Medium to High if reusable NLP/search accelerators and {search_stack} integration patterns exist; Medium if heavy data labeling or bespoke taxonomy work is required.",
-            "major_cost_drivers": [
-                "Data profiling and labeling effort",
-                f"{search_stack} integration and performance testing",
-                f"{deployment_context} approvals and DevOps constraints",
-                "O&M, relevance tuning, and model retraining ownership",
-                "Security, IPR, and documentation obligations",
-            ],
-            "pricing_model_recommendation": "Fixed price for discovery plus MVP, then milestone-based rollout and separately priced O&M/relevance tuning.",
-            "commercial_risks": [
-                "Unclear data quality and relevance metrics may cause underestimation.",
-                f"Fixed-price commitments before {search_stack}/API access could compress margins.",
-                "O&M expectations may be larger than implementation effort if tuning ownership is vague.",
-            ],
-        }
+    lower = raw_text.lower()
+    drivers = ["Team duration", "Scope uncertainty", "Acceptance criteria"]
+    if any(term in lower for term in ("api", "integration", "microservice", "existing system")):
+        drivers.append("Integration discovery and testing")
+    if any(term in lower for term in ("data", "migration", "report", "analytics", "database")):
+        drivers.append("Data profiling, migration, reporting, or reconciliation")
+    if any(term in lower for term in ("security", "audit", "privacy", "confidential", "encryption")):
+        drivers.append("Security, audit, and compliance evidence")
+    if any(term in lower for term in ("operate", "maintain", "support", "sla", "o&m")):
+        drivers.append("Operations and support coverage")
     return {
         "estimate_disclaimer": "Directional estimate only; validate after scope, dependencies, and commercial terms are clarified.",
         "estimated_project_size_range": "To be validated after discovery.",
         "estimated_delivery_cost_range": "To be validated after discovery.",
         "margin_attractiveness": "Unknown until scope, timeline, and client dependencies are clarified.",
-        "major_cost_drivers": ["Team duration", "Integrations", "Data readiness", "Security/compliance", "Support obligations"],
+        "major_cost_drivers": _dedupe(drivers),
         "pricing_model_recommendation": "Discovery-first pricing followed by milestone-based implementation.",
         "commercial_risks": ["Ambiguous scope", "Unclear acceptance criteria", "Client dependency delays"],
     }
 
 
 def _competitor_intelligence(raw_text: str, tags: list[str]) -> list[dict[str, str]]:
-    search_stack = "search-stack"
-    deployment_context = "deployment"
     return [
         {
             "competitor_category": "Large system integrators",
-            "likely_positioning": "Government credentials, delivery scale, compliance process, and existing public-sector relationships.",
-            "strength": "Procurement familiarity and large-team execution capacity.",
-            "weakness": "May propose heavier delivery models with slower experimentation cycles.",
-            "counter_position": f"Lead with a faster relevance pilot, {search_stack} integration plan, measurable KPIs, and a lean expert team.",
+            "likely_positioning": "Delivery scale, process maturity, compliance comfort, and ability to staff quickly.",
+            "strength": "Procurement familiarity and execution capacity.",
+            "weakness": "May propose heavier delivery models with slower clarification cycles.",
+            "counter_position": "Lead with sharper discovery, clearer assumptions, faster MVP governance, and evidence-backed delivery risk control.",
         },
         {
-            "competitor_category": "IT services companies",
-            "likely_positioning": "Cost-effective implementation and managed services.",
-            "strength": "Competitive pricing and staffing flexibility.",
-            "weakness": "May be less differentiated on search relevance science and executive outcome framing.",
-            "counter_position": "Show reusable NLP/search accelerators, relevance dashboarding, and governance for ongoing tuning.",
+            "competitor_category": "Specialist technology firms",
+            "likely_positioning": "Domain-specific expertise and faster prototyping.",
+            "strength": "Focused technical depth.",
+            "weakness": "May underplay governance, operations, and enterprise handover.",
+            "counter_position": "Position technical depth together with delivery governance, security, documentation, and operating model clarity.",
         },
         {
-            "competitor_category": "AI/analytics specialists",
-            "likely_positioning": "Model accuracy, data science depth, and advanced NLP capability.",
-            "strength": "Strong ML credibility.",
-            "weakness": f"May underplay search integration, {deployment_context} realities, and O&M ownership.",
-            "counter_position": f"Bridge AI accuracy with production search integration, explainability, {deployment_context} compliance, and support ownership.",
-        },
-        {
-            "competitor_category": "Search technology specialists",
-            "likely_positioning": "Search tuning, ranking, and search engine engineering.",
-            "strength": "Deep search relevance know-how.",
-            "weakness": "May be narrower on proposal packaging, governance, knowledge transfer, or end-to-end delivery.",
-            "counter_position": "Position as search relevance plus delivery governance, IPR transfer support, documentation, and O&M enablement.",
+            "competitor_category": "Low-cost implementation vendors",
+            "likely_positioning": "Lower price and flexible staffing.",
+            "strength": "Cost competitiveness.",
+            "weakness": "May accept unclear scope and create delivery risk later.",
+            "counter_position": "Use explicit assumptions, risk register, architecture clarity, and phased commitments to show lower total delivery risk.",
         },
     ]
 
 
 def _prospect_call_prep(raw_text: str, tags: list[str], missing: list[str]) -> dict[str, Any]:
-    if _looks_like_search_nlp_opportunity(raw_text, tags):
-        search_stack_question = "What search engine version, schema, analyzers, indexes, and query handlers are currently in production?"
-        deployment_question = "What deployment-environment constraints could block dependencies or model serving?"
-        delivery_guardrail = "Fixed latency or production timeline before search-stack and deployment constraints are validated."
-        return {
-            "opening_narrative_30_seconds": "We understand this as a discovery and relevance problem, not just a search feature. If users cannot find the right products, services, or records, search relevance becomes a business adoption and support issue. Our recommended path is to baseline current relevance, add an NLP optimization layer around the existing search stack, validate classification with real data, and roll out in measurable phases.",
-            "strongest_talking_points": [
-                "Frame the goal as improving discovery and reducing abandonment or manual support effort.",
-                "Propose measurable relevance KPIs before committing implementation success.",
-                "Position an NLP layer that augments the existing search engine rather than forcing a disruptive replacement.",
-                "Make category classification explainable and tunable for catalog or taxonomy governance.",
-                "Separate discovery, MVP, rollout, and O&M so commercial risk is controlled.",
-            ],
-            "must_ask_discovery_questions": missing[:10],
-            "technical_questions": [
-                search_stack_question,
-                "What latency budget is available for preprocessing and query rewriting?",
-                "Which APIs or integration points can the NLP service use?",
-                "What labeled category data and search logs are available for model validation?",
-                "Are multilingual, synonym, spelling correction, transliteration, or semantic search capabilities expected?",
-            ],
-            "commercial_questions": [
-                "Is the expected pricing model fixed-price, milestone-based, or T&M for discovery and O&M?",
-                "What O&M duration and SLA coverage should be assumed?",
-                "Are data labeling, catalog cleansing, and taxonomy governance included in vendor scope?",
-                "Will relevance tuning after go-live be separately funded?",
-                "Are there budget guardrails or phased award constraints we should know before sizing?",
-            ],
-            "risk_questions": [
-                "What are the known pain points or failure modes in current search?",
-                "Which stakeholder signs off on relevance improvement?",
-                "What happens if catalog data quality limits model accuracy?",
-                deployment_question,
-                "Where does the client draw the line between query optimization and full search replacement?",
-            ],
-            "assumptions_to_validate": [
-                "The existing search engine remains in scope unless replacement is explicitly required.",
-                "Historical logs and catalog data can be shared securely.",
-                "The first release can be scoped as a pilot before full rollout.",
-                "Relevance KPIs can be agreed before implementation.",
-                "O&M includes relevance tuning, not only uptime support.",
-            ],
-            "avoid_overcommitting_on": [
-                "Exact relevance lift before seeing logs, labels, and catalog quality.",
-                delivery_guardrail,
-                "Full IPR, retraining, and O&M obligations without legal/commercial review.",
-            ],
-        }
     return {
         "opening_narrative_30_seconds": "We see this as a qualification conversation: clarify the business outcome, separate delivery scope from tender process text, and identify the risks that affect timeline, cost, and acceptance.",
-        "strongest_talking_points": ["Outcome-first discovery", "Controlled scope", "Dependency visibility", "Phased delivery", "Transparent assumptions"],
+        "strongest_talking_points": [
+            "Confirm the business outcome before discussing implementation scope.",
+            "Separate mandatory requirements from optional or future-phase work.",
+            "Make client-owned dependencies visible before price and timeline commitments.",
+            "Use a phased delivery model tied to measurable acceptance gates.",
+            "Turn every unknown into an explicit assumption, exclusion, or discovery action.",
+        ],
         "must_ask_discovery_questions": missing[:10],
-        "technical_questions": ["What systems are in scope?", "What APIs/data are available?", "What hosting model is required?", "What security controls are mandatory?", "What acceptance tests will be used?"],
-        "commercial_questions": ["What pricing model is preferred?", "What budget guardrails exist?", "What support duration is expected?", "What payment milestones are planned?", "What penalties or SLAs apply?"],
-        "risk_questions": ["What client dependencies are hardest?", "What has failed before?", "Who owns sign-off?", "What is out of scope?", "What timeline is non-negotiable?"],
-        "assumptions_to_validate": ["Scope can be phased", "Client access will be timely", "Acceptance criteria can be agreed", "Security approvals are available", "O&M is separately defined"],
-        "avoid_overcommitting_on": ["Fixed price without discovery", "Dates without dependencies", "Unsupported compliance claims"],
+        "technical_questions": [
+            "Which systems, user roles, workflows, integrations, data sources, and environments are in scope?",
+            "What non-functional requirements are mandatory for performance, availability, observability, and security?",
+            "What acceptance tests, UAT data, and sign-off process will determine completion?",
+        ],
+        "commercial_questions": [
+            "What pricing model, budget guardrails, payment milestones, warranty period, and O&M duration should be assumed?",
+            "Which client delays, data gaps, access issues, or change requests should trigger commercial change control?",
+        ],
+        "risk_questions": [
+            "What has failed or been difficult in previous attempts?",
+            "Which dependencies are client-owned and timeline-critical?",
+            "What is explicitly out of scope for the first release?",
+        ],
+        "assumptions_to_validate": [
+            "Scope can be phased into discovery, MVP, rollout, and support.",
+            "Client access, data, environments, and approvals will be available on agreed dates.",
+            "Acceptance criteria and sign-off ownership can be agreed before implementation starts.",
+            "O&M, warranty, and change-control obligations are separately defined.",
+        ],
+        "avoid_overcommitting_on": [
+            "Fixed price without discovery.",
+            "Dates without dependency readiness.",
+            "Architecture or compliance claims not confirmed by the client environment.",
+        ],
     }
 
 
@@ -1534,8 +2123,7 @@ def _build_executive_report(
     excluded_noise: list[dict[str, Any]],
 ) -> dict[str, Any]:
     tags = analysis.get("domain_tags", [])
-    search_scope = _looks_like_search_nlp_opportunity(raw_text, tags)
-    missing = _missing_information_questions(raw_text, tags)
+    missing = _missing_information_questions(raw_text, tags, analysis)
     scores = _score_bid(analysis, normalized_requirements, raw_text)
     decision = "Bid with Clarifications" if scores["overall_bid_score"] >= 70 else "Hold"
     if scores["overall_bid_score"] >= 84 and len(missing) <= 8:
@@ -1543,53 +2131,32 @@ def _build_executive_report(
     if scores["overall_bid_score"] < 55:
         decision = "No Bid"
 
-    if search_scope:
-        client_label = _extract_client_name(raw_text) or "The buyer"
-        platform_label = "the search platform"
-        platform_reference = "the existing search platform"
-        search_stack_label = "search-stack integration"
-        deployment_label = "production deployment"
-        architecture_unknown = "search architecture"
-        deployment_unknown = "deployment constraints"
-        ceo_brief = (
-            f"{client_label} is seeking to improve search by augmenting keyword-based search with NLP-driven query understanding, "
-            "search string optimization, and product/service category classification. The business impact is material: poor search "
-            "relevance can prevent users from finding intended products, services, or records, increasing abandonment, support load, "
-            f"or leakage away from {platform_label}. The opportunity is attractive for a team with NLP, information retrieval, {search_stack_label}, "
-            f"and {deployment_label} experience. Recommendation: proceed to bid, subject to clarifications on search volume, "
-            f"relevance KPIs, training data, {architecture_unknown}, {deployment_unknown}, and O&M ownership."
-        )
-        business_problem = {
-            "current_state": "The current search experience appears to rely heavily on keyword-based matching and catalog/category metadata.",
-            "pain_points": [
-                "Users may fail to find the intended products, services, or records.",
-                "Search queries may not map cleanly to catalog categories or seller-uploaded descriptions.",
-                "Poor search relevance may push demand outside the intended platform or increase manual support effort.",
-            ],
-            "business_consequences": [
-                f"Reduced trust in {platform_label} search results.",
-                "Demand leakage and weaker platform adoption.",
-                "Higher support and manual discovery burden.",
-            ],
-            "desired_future_state": f"An NLP-powered search optimization layer that understands query intent, improves category classification, integrates with {platform_reference}, and runs reliably in the target deployment environment.",
-            "executive_interpretation": "This is a discovery and relevance initiative, not only an algorithm implementation.",
-            "confidence": "high",
-            "evidence": _evidence_for(raw_text, {"search", "natural language processing", "solr", "category"}),
-        }
-    else:
-        ceo_brief = (
-            f"{analysis.get('business_problem') or 'The buyer has described a technology initiative with unresolved scope details.'} "
-            "The next action is to qualify business outcomes, must-have scope, client dependencies, acceptance criteria, and commercial exposure before committing price or dates."
-        )
-        business_problem = {
-            "current_state": analysis.get("business_problem") or "Not clearly stated.",
-            "pain_points": ["Business pain is not explicit enough in the RFP and needs discovery."],
-            "business_consequences": ["Unclear success criteria can cause pricing, delivery, and acceptance risk."],
-            "desired_future_state": "A scoped delivery plan tied to measurable business outcomes.",
-            "executive_interpretation": "Treat the first call as a qualification and scope-control conversation.",
-            "confidence": "medium",
-            "evidence": analysis.get("business_problem") or "",
-        }
+    ceo_brief = (
+        f"{analysis.get('business_problem') or 'The buyer has described a technology initiative with unresolved scope details.'} "
+        "The next action is to qualify business outcomes, must-have scope, client-owned dependencies, acceptance criteria, operating obligations, and commercial exposure before committing price or dates."
+    )
+    pain_points = [
+        "Business pain and success metrics need validation with executive stakeholders.",
+        "Unclear assumptions can affect delivery scope, architecture, pricing, and acceptance.",
+    ]
+    if analysis.get("integration_needs"):
+        pain_points.append("Integration ownership and environment readiness may become gating delivery dependencies.")
+    if analysis.get("data_needs"):
+        pain_points.append("Data quality, access, ownership, and reporting expectations may affect delivery confidence.")
+    if analysis.get("compliance_needs") or analysis.get("non_functional_requirements"):
+        pain_points.append("Security, performance, availability, audit, or compliance expectations may affect solution design.")
+    business_problem = {
+        "current_state": analysis.get("business_problem") or "Not clearly stated.",
+        "pain_points": _dedupe(pain_points)[:6],
+        "business_consequences": [
+            "Unclear success criteria can cause pricing, delivery, and acceptance risk.",
+            "Unvalidated dependencies can create timeline and margin exposure.",
+        ],
+        "desired_future_state": "A scoped delivery plan tied to measurable business outcomes, validated dependencies, explicit assumptions, and an architecture aligned to the RFP.",
+        "executive_interpretation": "Treat the first call as a qualification and scope-control conversation.",
+        "confidence": "medium",
+        "evidence": analysis.get("business_problem") or "",
+    }
 
     quality_checks = _quality_checks(analysis, normalized_requirements, excluded_noise, missing, ceo_brief)
     return {
@@ -1603,7 +2170,7 @@ def _build_executive_report(
             "delivery_risk": scores["delivery_risk"],
             "commercial_attractiveness": scores["commercial_attractiveness"],
             "competitive_position": scores["competitive_position"],
-            "rationale": f"Strong technical fit for NLP/search engineering, but key unknowns remain around data availability, relevance KPIs, search scale, {architecture_unknown}, {deployment_unknown}, and O&M ownership." if search_scope else "Potential fit exists, but the opportunity should be held until scope, dependencies, and acceptance criteria are clarified.",
+            "rationale": "Potential fit exists, but commitment quality depends on validated scope, dependencies, acceptance criteria, operating obligations, and commercial guardrails.",
             "score_breakdown": {
                 "strategic_fit": scores["strategic_fit"],
                 "technical_fit": scores["technical_fit"],
@@ -1619,42 +2186,29 @@ def _build_executive_report(
         "solution_scope": normalized_requirements,
         "excluded_noise": excluded_noise,
         "missing_information": [
-            {"category": "Search relevance and success metrics" if search_scope else "Business and success metrics", "questions": missing[:5]},
-            {"category": "Data, taxonomy, and integration" if search_scope else "Data and integration", "questions": missing[5:10]},
-            {"category": "Infrastructure, operations, and commercial" if search_scope else "Delivery, operations, and commercial", "questions": missing[10:]},
+            {"category": "Business and success metrics", "questions": missing[:5]},
+            {"category": "Data, integration, and technical readiness", "questions": missing[5:10]},
+            {"category": "Delivery, operations, security, and commercial", "questions": missing[10:]},
         ],
-        "risk_assessment": _risk_assessment(raw_text, tags),
+        "risk_assessment": _risk_assessment(raw_text, tags, analysis),
         "delivery_complexity": _delivery_complexity(raw_text, tags),
-        "architecture_recommendation": _architecture_recommendation(raw_text, tags),
+        "architecture_recommendation": _architecture_recommendation(raw_text, tags, analysis),
         "commercial_intelligence": _commercial_intelligence(raw_text, tags),
         "competitor_intelligence": _competitor_intelligence(raw_text, tags),
         "win_strategy": [
-            "Improve user discovery, not just search.",
-            "Show measurable search relevance improvement with agreed KPIs.",
-            "Bring an NLP plus search-stack integration accelerator mindset.",
-            "Offer a discovery workshop before full implementation commitment.",
-            "Provide explainable product/service category classification.",
-            "Include relevance evaluation dashboarding and feedback loops.",
-            "Reduce abandonment, support load, or leakage caused by poor search relevance.",
-            "Commit to deployment and data residency compliance after validation.",
-            "Support clear IPR transfer, knowledge transfer, and O&M governance.",
-        ] if search_scope else [
             "Lead with business outcomes and measurable success criteria.",
             "Separate true solution scope from procurement/legal/admin text.",
             "Use phased discovery and implementation to control risk.",
             "Make assumptions, exclusions, dependencies, and acceptance gates explicit.",
+            "Anchor the client narrative in relevant internal evidence rather than unsupported claims.",
+            "Present architecture as a validated direction, not a fixed commitment before discovery.",
         ],
         "prospect_call_prep": _prospect_call_prep(raw_text, tags, missing),
         "past_expertise_match": {
             "match_type": "No match",
             "confidence_score": 0,
             "matched_assets": [],
-            "reusable_components": [
-                "NLP/search relevance accelerator",
-                "Search API integration patterns",
-                "Category classification pipeline",
-                "Relevance evaluation dashboard",
-            ] if search_scope else [],
+            "reusable_components": [],
             "past_expertise_story": "No internal past project corpus connected yet. Match confidence is limited.",
             "gaps": ["Connect internal project corpus, case studies, architecture docs, and reusable code repositories to improve match evidence."],
             "assumption": True,
@@ -1664,7 +2218,7 @@ def _build_executive_report(
             "Understanding of the buyer's business problem",
             "Proposed solution",
             "Technical architecture",
-            "NLP/search methodology" if search_scope else "Implementation methodology",
+            "Implementation methodology",
             "Integration approach",
             "Deployment approach",
             "Security and compliance",
@@ -1707,8 +2261,8 @@ def _quality_checks(
         "functional_requirements_are_solution_features": not any(term in functionals for term in accidental_noise_terms),
         "procurement_instructions_excluded_from_scope": bool(excluded_noise) and not any(term in requirement_text for term in accidental_noise_terms),
         "missing_information_not_empty": bool(missing),
-        "domain_tags_are_specific": bool(domain_tags & {"NLP", "Search Optimization", "Product Category Classification", "API Integration", "Cloud/Hosted Deployment"}),
-        "ceo_brief_answers_business_impact": any(term in ceo_brief.lower() for term in ("impact", "leakage", "business", "recommendation")),
+        "domain_tags_are_specific": bool(domain_tags),
+        "ceo_brief_answers_business_impact": any(term in ceo_brief.lower() for term in ("business", "outcome", "scope", "success", "risk", "recommendation")),
         "bid_recommendation_exists": True,
         "risks_clarifications_win_strategy_delivery_model_exist": True,
         "unsupported_claims_marked_as_assumptions": True,
@@ -1798,7 +2352,7 @@ def _sanitize_analysis_payload(payload: dict[str, Any], raw_text: str) -> dict[s
 
     payload["domain_tags"] = _infer_domain_tags(raw_text)
     payload["missing_information"] = _clean_analysis_items(payload.get("missing_information"), solution_field=False)
-    missing_questions = _missing_information_questions(raw_text, payload["domain_tags"])
+    missing_questions = _missing_information_questions(raw_text, payload["domain_tags"], payload)
     if not payload["missing_information"] or len(payload["missing_information"]) < 6:
         payload["missing_information"] = missing_questions
     else:
@@ -1835,22 +2389,7 @@ def _joined(items: list[str], fallback: str, limit: int = 3) -> str:
 
 
 def _capability_labels(tags: list[str]) -> list[str]:
-    labels = {
-        "NLP": "NLP-led query understanding",
-        "Search Optimization": "search relevance optimization",
-        "Information Retrieval": "information retrieval",
-        "Query Understanding": "query intent understanding",
-        "Product Category Classification": "product/service category classification",
-        "Machine Learning": "machine learning",
-        "Cognitive Search": "cognitive search",
-        "Search Relevance": "search relevance measurement",
-        "Catalog Management": "catalog management",
-        "API Integration": "API/microservice integration",
-        "Cloud/Hosted Deployment": "cloud/hosted deployment",
-        "Security": "security and auditability",
-        "Operations & Maintenance": "operations and maintenance",
-    }
-    return [labels.get(tag, tag.replace("_", " ")) for tag in tags]
+    return [CAPABILITY_LABELS.get(tag, tag.replace("_", " ")) for tag in tags]
 
 
 def _build_executive_intelligence(analysis: dict[str, Any], raw_text: str | None = None) -> dict[str, Any]:
@@ -1997,6 +2536,8 @@ def _build_executive_intelligence(analysis: dict[str, Any], raw_text: str | None
 async def _generate_llm_executive_intelligence(
     raw_text: str,
     extracted: dict[str, Any],
+    *,
+    regenerate: bool = False,
 ) -> dict[str, Any] | None:
     llm_service = get_llm_service()
     clipped_text = raw_text[:18_000]
@@ -2009,6 +2550,9 @@ Use the extracted facts only as evidence signals; challenge ambiguity.
 Extracted signals:
 {extracted}
 
+Regeneration instruction:
+{"This is a regeneration. Improve specificity, risk ordering, and client-call usefulness without changing facts or inventing unsupported details." if regenerate else "This is the first generation. Stay concise and strictly grounded."}
+
 RFP text:
 <document>
 {clipped_text}
@@ -2019,7 +2563,8 @@ RFP text:
             system_prompt=_EXECUTIVE_SYSTEM_PROMPT,
             user_content=user_content,
             output_schema=ExecutiveIntelligenceOutput,
-            temperature=0.0,
+            temperature=0.15 if regenerate else 0.0,
+            model_name=settings.RFP_ANALYSIS_MODEL,
         )
         payload = result.model_dump()
         if payload.get("executive_summary"):
@@ -2115,6 +2660,7 @@ def _finalize_analysis_payload(
         normalized_requirements,
         excluded_noise,
     )
+    rfp_intelligence = _build_rfp_intelligence(payload, raw_text, executive_report)
     if not executive_intelligence:
         executive_intelligence = _legacy_executive_intelligence_from_report(executive_report)
 
@@ -2126,6 +2672,7 @@ def _finalize_analysis_payload(
         "normalized_requirements": normalized_requirements,
         "excluded_noise": excluded_noise,
         "executive_report": executive_report,
+        "rfp_intelligence": rfp_intelligence,
         "executive_intelligence": executive_intelligence,
     }
     return payload
@@ -2226,7 +2773,7 @@ def _deterministic_extract(raw_text: str) -> tuple[RFPExtractionOutput, dict[str
     return RFPExtractionOutput.model_validate(analysis), evidence
 
 
-async def analyze_rfp_document(raw_text: str) -> dict[str, Any]:
+async def analyze_rfp_document(raw_text: str, *, regenerate: bool = False) -> dict[str, Any]:
     """
     Run the RFP Understanding Engine on extracted document text.
     """
@@ -2250,7 +2797,8 @@ Return only JSON matching the schema. Do not include markdown.
             system_prompt=_SYSTEM_PROMPT,
             user_content=user_content,
             output_schema=RFPExtractionOutput,
-            temperature=0.0,
+            temperature=0.1 if regenerate else 0.0,
+            model_name=settings.RFP_ANALYSIS_MODEL,
         )
         extraction_meta = {
             "mode": "llm_structured",
@@ -2261,12 +2809,17 @@ Return only JSON matching the schema. Do not include markdown.
     except Exception as exc:
         logger.warning("RFP LLM extraction unavailable; using deterministic grounded fallback.")
         result, extraction_meta = _deterministic_extract(raw_text)
+        extraction_meta["warnings"] = _dedupe(
+            [
+                *[str(item) for item in extraction_meta.get("warnings", [])],
+                f"LLM analysis unavailable: {str(exc)}",
+            ]
+        )[:4]
 
     payload = result.model_dump()
+    # The RFP Analysis page now uses raw_llm_output.rfp_intelligence. Avoid a
+    # second large executive-intelligence LLM call here so the first-page
+    # intelligence and architecture calls stay within provider TPM limits.
     executive_intelligence = extraction_meta.get("executive_intelligence")
-    if not executive_intelligence:
-        executive_intelligence = await _generate_llm_executive_intelligence(
-            raw_text,
-            _sanitize_analysis_payload(payload.copy(), raw_text),
-        )
-    return _finalize_analysis_payload(payload, raw_text, extraction_meta, executive_intelligence)
+    finalized = _finalize_analysis_payload(payload, raw_text, extraction_meta, executive_intelligence)
+    return await _enrich_rfp_intelligence(raw_text, finalized, regenerate=regenerate)

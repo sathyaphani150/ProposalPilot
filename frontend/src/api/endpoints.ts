@@ -130,11 +130,6 @@ export const proposalApi = {
     return data
   },
 
-  getLatestPrepPack: async (sessionId: string) => {
-    const { data } = await apiClient.get(`/proposals/session/${sessionId}/prep-pack`)
-    return data
-  },
-
   export: async (proposalId: string, format: 'docx' | 'pdf') => {
     const response = await apiClient.post(
       `/proposals/${proposalId}/export`,
