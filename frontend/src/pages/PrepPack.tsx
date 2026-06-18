@@ -196,34 +196,51 @@ export function PrepPack() {
         </SectionCard>
       </div>
 
-      <div className="prep-two-column">
-        <SectionCard title="Discovery Questions" icon={<HelpCircle size={20} color="var(--color-warning)" />}>
-          <div className="question-grid">
-            {Object.entries(questions)
-              .filter(([, items]) => Array.isArray(items) && items.length > 0)
-              .map(([group, items]) => (
-            <div key={group} className="match-card">
-              <h4 style={{ textTransform: 'capitalize', marginBottom: '0.5rem' }}>{group.replaceAll('_', ' ')}</h4>
-              <BulletList items={items} empty="No questions generated for this group." />
+      <SectionCard title="Discovery Questions" icon={<HelpCircle size={20} color="var(--color-warning)" />}>
+        <div className="question-grid">
+          {[
+            ['Business Questions', content.business_questions || questions.business || []],
+            ['Data Questions', content.data_questions || questions.data || []],
+            ['Integration Questions', content.integration_questions || questions.integration || []],
+            ['Architecture Questions', content.architecture_questions || questions.architecture || []],
+            ['Implementation Readiness Questions', content.implementation_questions || questions.implementation_readiness || []],
+          ].map(([label, items]) => (
+            <div key={label as string} className="match-card">
+              <h4 style={{ textTransform: 'capitalize', marginBottom: '0.5rem' }}>{label}</h4>
+              <BulletList items={items as string[]} empty="No questions generated for this group." />
             </div>
-            ))}
-          </div>
-        </SectionCard>
-
-        <div className="side-stack">
-          <SectionCard title="Talking Points" icon={<Target size={20} color="var(--color-info)" />}>
-            <BulletList items={content.talking_points} empty="No talking points generated." />
-          </SectionCard>
-          <SectionCard title="Assumptions To Validate" icon={<HelpCircle size={20} color="var(--color-warning)" />}>
-            <BulletList items={content.assumptions_to_validate} empty="No assumptions generated." />
-          </SectionCard>
-          <SectionCard title="Risks & Assumptions" icon={<ShieldAlert size={20} color="var(--color-error)" />}>
-            <BulletList items={content.risks_and_assumptions} empty="No risks identified." />
-          </SectionCard>
-          <SectionCard title="Scope Guardrails" icon={<CheckCircle size={20} color="var(--color-success)" />}>
-            <BulletList items={content.scope_guardrails} empty="No guardrails identified." />
-          </SectionCard>
+          ))}
         </div>
+        {Object.keys(questions || {}).length > 0 && (
+          <div style={{ marginTop: '1rem' }}>
+            <h4 style={{ marginBottom: '0.5rem' }}>Full Question Set</h4>
+            <div className="question-grid">
+              {Object.entries(questions)
+                .filter(([, items]) => Array.isArray(items) && items.length > 0)
+                .map(([group, items]) => (
+                  <div key={group} className="match-card">
+                    <h5 style={{ textTransform: 'capitalize', marginBottom: '0.5rem' }}>{group.replaceAll('_', ' ')}</h5>
+                    <BulletList items={items} empty="No questions generated for this group." />
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+      </SectionCard>
+
+      <div className="side-stack">
+        <SectionCard title="Talking Points" icon={<Target size={20} color="var(--color-info)" />}>
+          <BulletList items={content.talking_points} empty="No talking points generated." />
+        </SectionCard>
+        <SectionCard title="Assumptions To Validate" icon={<HelpCircle size={20} color="var(--color-warning)" />}>
+          <BulletList items={content.assumptions_to_validate} empty="No assumptions generated." />
+        </SectionCard>
+        <SectionCard title="Risks & Assumptions" icon={<ShieldAlert size={20} color="var(--color-error)" />}>
+          <BulletList items={content.risks_and_assumptions} empty="No risks identified." />
+        </SectionCard>
+        <SectionCard title="Scope Guardrails" icon={<CheckCircle size={20} color="var(--color-success)" />}>
+          <BulletList items={content.scope_guardrails} empty="No guardrails identified." />
+        </SectionCard>
       </div>
 
       <div className="prep-two-column">
@@ -247,7 +264,7 @@ export function PrepPack() {
                 <div className="flex justify-between items-center" style={{ marginBottom: '0.5rem', gap: '1rem' }}>
                   <strong>{project.title}</strong>
                   <span className="badge badge-analyzed" style={{ textTransform: 'uppercase' }}>
-                    {project.match_type} - {Math.round(project.confidence_score * 100)}%
+                    {project.match_type} - {Math.round((project.confidence ?? project.confidence_score) * 100)}%
                   </span>
                 </div>
                 <p className="readable-text">{project.relevance_summary}</p>

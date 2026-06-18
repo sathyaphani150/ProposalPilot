@@ -2,7 +2,15 @@
  * ProposalPilot AI — RFP API Functions
  */
 import { apiClient } from './client'
-import type { KnowledgeItem, KnowledgeSearchResult, RFPSession, RFPAnalysis } from '@/types'
+import type {
+  ArchitectureRecommendation,
+  ExpertiseMatch,
+  KnowledgeItem,
+  KnowledgeSearchResult,
+  RFPSession,
+  RFPAnalysis,
+  SimilarProject,
+} from '@/types'
 
 export const rfpApi = {
   upload: async (
@@ -40,8 +48,10 @@ export const rfpApi = {
     return data
   },
 
-  getAnalysis: async (sessionId: string): Promise<{ status: string; analysis: RFPAnalysis | null }> => {
-    const { data } = await apiClient.get<{ status: string; analysis: RFPAnalysis | null }>(
+  getAnalysis: async (
+    sessionId: string
+  ): Promise<{ status: string; analysis: RFPAnalysis | null; error_message?: string | null }> => {
+    const { data } = await apiClient.get<{ status: string; analysis: RFPAnalysis | null; error_message?: string | null }>(
       `/rfp/${sessionId}/analysis`
     )
     return data
@@ -97,6 +107,24 @@ export const knowledgeApi = {
 
   delete: async (itemId: string): Promise<void> => {
     await apiClient.delete(`/knowledge/${itemId}`)
+  },
+}
+
+export const expertiseApi = {
+  match: async (payload: { rfp_summary: string; similar_projects: SimilarProject[] }): Promise<ExpertiseMatch> => {
+    const { data } = await apiClient.post<ExpertiseMatch>('/expertise/match', payload)
+    return data
+  },
+}
+
+export const architectureApi = {
+  recommend: async (payload: {
+    rfp_summary: string
+    expertise_match: ExpertiseMatch
+    similar_projects: SimilarProject[]
+  }): Promise<ArchitectureRecommendation> => {
+    const { data } = await apiClient.post<ArchitectureRecommendation>('/architecture/recommend', payload)
+    return data
   },
 }
 

@@ -297,7 +297,7 @@ export function KnowledgeBase() {
                               <span style={{ fontWeight: 600, fontSize: '1.05rem' }}>{result.title || 'Internal Knowledge'}</span>
                             </div>
                             <span style={{ fontSize: '0.8rem', color: 'var(--color-primary-light)', fontWeight: 650 }}>
-                              Match: {Math.round(result.score * 100)}%
+                              Confidence: {Math.round((result.confidence ?? result.score) * 100)}%
                             </span>
                           </div>
                           <p

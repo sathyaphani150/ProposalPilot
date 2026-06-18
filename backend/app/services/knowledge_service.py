@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import uuid
+import re
 from pathlib import Path
 from typing import Any
 from loguru import logger
@@ -20,6 +21,64 @@ from app.config import get_settings
 from app.exceptions import NotFoundError
 
 settings = get_settings()
+
+
+_KNOWLEDGE_STOPWORDS = {
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "this",
+    "that",
+    "shall",
+    "will",
+    "must",
+    "should",
+    "project",
+    "proposal",
+    "document",
+    "solution",
+    "service",
+    "services",
+    "system",
+    "platform",
+    "case",
+    "study",
+    "internal",
+    "knowledge",
+    "base",
+}
+
+
+def _important_tokens(text: str) -> set[str]:
+    tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9_.+#/-]{2,}", text.lower())
+    return {token for token in tokens if token not in _KNOWLEDGE_STOPWORDS and len(token) >= 4}
+
+
+def _rerank_score(query: str, result: dict[str, Any]) -> float:
+    haystack = " ".join(
+        str(result.get(key) or "")
+        for key in ("title", "project_name", "domain", "item_type", "text")
+    )
+    for key in ("tech_stack", "tags"):
+        value = result.get(key) or []
+        if isinstance(value, list):
+            haystack += " " + " ".join(str(item) for item in value)
+
+    query_tokens = _important_tokens(query)
+    result_tokens = _important_tokens(haystack)
+    if not query_tokens or not result_tokens:
+        return 0.0
+
+    overlap = len(query_tokens & result_tokens)
+    coverage = overlap / max(len(query_tokens), 1)
+    density = overlap / max(len(result_tokens), 1)
+    return round(max(0.0, min((coverage * 0.65) + (density * 0.35), 1.0)), 2)
+
+
+def _confidence(vector_score: float, rerank_score: float) -> float:
+    return round((vector_score * 0.7) + (rerank_score * 0.3), 2)
 
 
 def chunk_text(text: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> list[str]:
@@ -221,7 +280,23 @@ async def search_knowledge(
         top_k=limit,
         filters=filters if filters else None,
     )
-    return results
+    enriched_results: list[dict[str, Any]] = []
+    for result in results:
+        vector_score = round(float(result.get("score") or 0.0), 2)
+        rerank_score = _rerank_score(query, result)
+        confidence = _confidence(vector_score, rerank_score)
+        project_name = str(result.get("title") or result.get("project_name") or "Internal knowledge item").strip()
+        enriched_results.append(
+            {
+                **result,
+                "project_name": project_name,
+                "vector_score": vector_score,
+                "rerank_score": rerank_score,
+                "confidence": confidence,
+                "score": vector_score,
+            }
+        )
+    return enriched_results
 
 
 async def list_items(

@@ -139,8 +139,12 @@ export interface KnowledgeItem {
 export interface KnowledgeSearchResult {
   point_id: string
   score: number
+  vector_score?: number
+  rerank_score?: number
+  confidence?: number
   text: string
   doc_id: string
+  project_name?: string
   title?: string
   domain?: string
   item_type?: string
@@ -198,6 +202,11 @@ export interface PrepPackContent {
   past_expertise_story: string
   prospect_call_narrative: string
   discovery_questions: DiscoveryQuestions
+  business_questions?: string[]
+  data_questions?: string[]
+  integration_questions?: string[]
+  architecture_questions?: string[]
+  implementation_questions?: string[]
   talking_points: string[]
   risks_and_assumptions: string[]
   scope_guardrails: string[]
@@ -215,12 +224,27 @@ export interface SimilarProject {
   title: string
   match_type: 'exact' | 'partial' | 'adjacent' | 'none'
   confidence_score: number
+  confidence?: number
   relevance_summary: string
   reusable_assets: string[]
   evidence?: {
     chunk_index: number
     snippet: string
   }
+}
+
+export interface ExpertiseMatch {
+  match_type: 'Exact Match' | 'Partial Match' | 'Adjacent Match' | 'No Match' | string
+  confidence: number
+  reasoning: string
+  matched_projects: string[]
+}
+
+export interface ArchitectureRecommendation {
+  architecture: string
+  reusable_components: string[]
+  assumptions: string[]
+  validation_questions: string[]
 }
 
 export interface DiscoveryQuestions {

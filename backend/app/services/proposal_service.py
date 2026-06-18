@@ -24,6 +24,11 @@ class PrepPackLLMOutput(BaseModel):
     client_situation_assessment: str
     prospect_call_narrative: str
     value_propositions: list[str] = Field(default_factory=list)
+    business_questions: list[str] = Field(default_factory=list)
+    data_questions: list[str] = Field(default_factory=list)
+    integration_questions: list[str] = Field(default_factory=list)
+    architecture_questions: list[str] = Field(default_factory=list)
+    implementation_questions: list[str] = Field(default_factory=list)
     discovery_questions: dict[str, list[str]] = Field(default_factory=dict)
     talking_points: list[str] = Field(default_factory=list)
     assumptions_to_validate: list[str] = Field(default_factory=list)
@@ -216,8 +221,12 @@ def _format_matches(matches: list[dict[str, Any]], *, query: str, min_score: flo
             {
                 "doc_id": doc_id,
                 "title": match.get("title") or "Internal knowledge item",
+                "project_name": match.get("project_name") or match.get("title") or "Internal knowledge item",
                 "match_type": _match_type(score),
                 "confidence_score": round(score, 3),
+                "confidence": round(float(match.get("confidence") or score), 3),
+                "vector_score": round(float(match.get("vector_score") or score), 3),
+                "rerank_score": round(float(match.get("rerank_score") or 0), 3),
                 "relevance_summary": text[:650],
                 "reusable_assets": [*tech_stack[:4], *tags[:4]][:6],
                 "evidence": {
@@ -368,12 +377,32 @@ def _discovery_questions(analysis: RFPAnalysis) -> dict[str, list[str]]:
         for key, questions in groups.items()
     }
     if any(cleaned.values()):
+        cleaned.setdefault("architecture", [
+            "What cloud preference, deployment model, and availability requirement should guide the design?",
+            "Which scalability, observability, and disaster recovery targets are mandatory?",
+        ])
+        cleaned.setdefault("implementation_readiness", [
+            "Is a dedicated product owner and delivery sponsor available now?",
+            "Are requirements sufficiently finalized to move beyond discovery?",
+        ])
         return cleaned
 
     return {
         "business": [
             "What measurable business outcome and success metric should drive the proposal?",
             "Which scope items are mandatory for the first release versus later phases?",
+        ],
+        "data": [
+            "Expected data volume, quality, retention, and migration complexity?",
+        ],
+        "integration": [
+            "Which source and target systems must be integrated at launch?",
+        ],
+        "architecture": [
+            "What cloud preference, deployment model, and availability requirement should we design for?",
+        ],
+        "implementation_readiness": [
+            "Is a dedicated product owner available and are requirements finalized?",
         ],
         "governance": [
             "Who owns acceptance criteria, UAT sign-off, security approval, and go-live readiness?",
@@ -438,10 +467,32 @@ def _clean_question_groups(groups: Any) -> dict[str, list[str]]:
     return cleaned
 
 
+def _question_group(value: Any) -> list[str]:
+    return _dedupe_text(_as_raw_string_list(value))[:8]
+
+
+def _build_discovery_questions(payload: dict[str, Any]) -> dict[str, list[str]]:
+    questions = _clean_question_groups(payload.get("discovery_questions"))
+    if questions:
+        return questions
+    return {
+        "business": _question_group(payload.get("business_questions")),
+        "data": _question_group(payload.get("data_questions")),
+        "integration": _question_group(payload.get("integration_questions")),
+        "architecture": _question_group(payload.get("architecture_questions")),
+        "implementation_readiness": _question_group(payload.get("implementation_questions")),
+    }
+
+
 def _sanitize_prep_output(output: PrepPackLLMOutput) -> dict[str, Any]:
     payload = output.model_dump()
     for key in (
         "value_propositions",
+        "business_questions",
+        "data_questions",
+        "integration_questions",
+        "architecture_questions",
+        "implementation_questions",
         "talking_points",
         "assumptions_to_validate",
         "risks_and_assumptions",
@@ -450,7 +501,13 @@ def _sanitize_prep_output(output: PrepPackLLMOutput) -> dict[str, Any]:
     ):
         payload[key] = _dedupe_text(_as_raw_string_list(payload.get(key)))[:8]
 
-    payload["discovery_questions"] = _clean_question_groups(payload.get("discovery_questions"))
+    payload["discovery_questions"] = _build_discovery_questions(payload)
+    discovery = payload["discovery_questions"]
+    payload["business_questions"] = payload["business_questions"] or discovery.get("business", [])
+    payload["data_questions"] = payload["data_questions"] or discovery.get("data", [])
+    payload["integration_questions"] = payload["integration_questions"] or discovery.get("integration", [])
+    payload["architecture_questions"] = payload["architecture_questions"] or discovery.get("architecture", [])
+    payload["implementation_questions"] = payload["implementation_questions"] or discovery.get("implementation_readiness", [])
 
     for key in (
         "rfp_summary",
@@ -506,7 +563,8 @@ Use this structured context:
 
 Requirements:
 - Discovery questions must be specific to the opportunity context above.
-- Include questions for business, operations, integration/data, governance/security, commercial, and success metrics where relevant.
+- Include business, data, integration, architecture, and implementation readiness questions.
+- Keep the legacy discovery_questions object aligned with those five categories where useful.
 - Each question should help executives uncover hidden requirements, decision criteria, stakeholder alignment, risk, or future vision.
 - If KB evidence is weak or absent, say so indirectly through cautious positioning; do not invent past experience.
 - Do not copy raw RFP clauses.
@@ -580,6 +638,7 @@ def _build_prep_pack_content(
     )[:8]
     guardrails = _as_text_list(analysis.scope_boundaries)
     formatted_matches = _evidence_filtered_matches(matches, query)
+    discovery_questions = _discovery_questions(analysis)
 
     best_match = formatted_matches[0] if formatted_matches else None
     if best_match:
@@ -616,7 +675,12 @@ def _build_prep_pack_content(
         "similar_projects": formatted_matches,
         "past_expertise_story": expertise_story,
         "prospect_call_narrative": _executive_narrative(analysis, formatted_matches),
-        "discovery_questions": _discovery_questions(analysis),
+        "discovery_questions": discovery_questions,
+        "business_questions": discovery_questions.get("business", []),
+        "data_questions": discovery_questions.get("data", []),
+        "integration_questions": discovery_questions.get("integration", []),
+        "architecture_questions": discovery_questions.get("architecture", []),
+        "implementation_questions": discovery_questions.get("implementation_readiness", []),
         "talking_points": _talking_points(analysis, functional, integrations, compliance, nfrs),
         "risks_and_assumptions": [
             *risks[:6],

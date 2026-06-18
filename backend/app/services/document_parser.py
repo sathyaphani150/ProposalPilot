@@ -5,6 +5,7 @@ Normalises whitespace and returns structured text suitable for LLM processing.
 """
 from __future__ import annotations
 
+from shutil import which
 from pathlib import Path
 from typing import Any
 
@@ -64,10 +65,16 @@ async def parse_document(file_path: str | Path) -> str:
 
     cleaned = _clean_text(text)
 
+    if ext == ".pdf" and not cleaned.strip():
+        ocr_text = _parse_pdf_with_ocr(path)
+        cleaned = _clean_text(ocr_text)
+
     if not cleaned.strip():
         raise DocumentParsingError(
             f"No readable text could be extracted from '{path.name}'. "
-            "The file may be scanned, image-based, or password-protected."
+            "The file may be scanned, image-based, or password-protected. "
+            "If this is a scanned PDF, install Tesseract OCR and pytesseract "
+            "or upload a text-based PDF/DOCX/TXT/MD file."
         )
 
     logger.info(f"Parsed '{path.name}': {len(cleaned)} characters extracted")
@@ -93,6 +100,48 @@ def _parse_pdf(path: Path) -> str:
             pages.append(f"--- Page {page_index + 1} ---\n{page_text}")
 
     doc.close()
+    return "\n\n".join(pages)
+
+
+def _parse_pdf_with_ocr(path: Path) -> str:
+    """
+    OCR fallback for image-only PDFs.
+    Requires pytesseract and the tesseract binary to be installed.
+    """
+    if which("tesseract") is None:
+        logger.debug("Tesseract binary not available; skipping PDF OCR fallback.")
+        return ""
+
+    try:
+        import pytesseract
+    except ImportError:
+        logger.debug("pytesseract not installed; skipping PDF OCR fallback.")
+        return ""
+
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        return ""
+
+    doc: Any = fitz.open(str(path))
+    pages: list[str] = []
+    try:
+        for page_index in range(int(doc.page_count)):
+            page = doc.load_page(page_index)
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            try:
+                from PIL import Image
+                image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                page_text = pytesseract.image_to_string(image)
+            except Exception as exc:
+                logger.debug(f"OCR failed on page {page_index + 1}: {exc}")
+                page_text = ""
+
+            if page_text.strip():
+                pages.append(f"--- Page {page_index + 1} (OCR) ---\n{page_text}")
+    finally:
+        doc.close()
+
     return "\n\n".join(pages)
 
 

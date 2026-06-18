@@ -19,9 +19,19 @@ import {
   ShieldAlert,
   Target,
 } from 'lucide-react'
-import { rfpApi } from '@/api/endpoints'
+import { architectureApi, expertiseApi, knowledgeApi, rfpApi } from '@/api/endpoints'
 import { getErrorMessage } from '@/api/client'
-import type { ExecutiveInsight, ExecutiveIntelligence, ExecutiveReport, RFPAnalysis as RFPAnalysisType, RFPStatus } from '@/types'
+import type {
+  ArchitectureRecommendation,
+  ExecutiveInsight,
+  ExecutiveIntelligence,
+  ExecutiveReport,
+  ExpertiseMatch,
+  KnowledgeSearchResult,
+  RFPAnalysis as RFPAnalysisType,
+  RFPStatus,
+  SimilarProject,
+} from '@/types'
 
 function getStatusBadge(status: RFPStatus) {
   const labels: Record<RFPStatus, string> = {
@@ -162,6 +172,55 @@ function asTextArray(value: unknown): string[] {
   if (!value) return []
   if (Array.isArray(value)) return value.map(asText).filter(Boolean)
   return [asText(value)].filter(Boolean)
+}
+
+function buildRfpSummary(analysis: RFPAnalysisType | null | undefined): string {
+  if (!analysis) return ''
+  const rawOutput = analysis.raw_llm_output
+  const executiveSummary =
+    rawOutput && rawOutput.executive_intelligence
+      ? asText((rawOutput.executive_intelligence as ExecutiveIntelligence).executive_summary)
+      : ''
+  return [
+    cleanDisplayText(analysis.business_problem || ''),
+    executiveSummary,
+    ...asTextArray(analysis.functional_requirements).slice(0, 4),
+    ...asTextArray(analysis.integration_needs).slice(0, 3),
+    ...asTextArray(analysis.data_needs).slice(0, 3),
+    ...asTextArray(analysis.compliance_needs).slice(0, 3),
+    ...asTextArray(analysis.domain_tags).slice(0, 3),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .trim()
+}
+
+function toSimilarProjects(results: KnowledgeSearchResult[] | undefined): SimilarProject[] {
+  return (results || []).slice(0, 5).map((result) => ({
+    doc_id: result.doc_id,
+    title: result.project_name || result.title || 'Internal Knowledge',
+    match_type: 'partial',
+    confidence_score: result.confidence ?? result.score,
+    confidence: result.confidence ?? result.score,
+    relevance_summary: cleanDisplayText(result.text),
+    reusable_assets: [...(result.tech_stack || []), ...(result.tags || [])].slice(0, 6),
+    evidence: { chunk_index: 0, snippet: result.text },
+  }))
+}
+
+function getAnalysisFailureMessage(
+  analysisResponse: { error_message?: string | null } | undefined,
+  analysis: RFPAnalysisType | null | undefined
+): string {
+  const apiMessage = analysisResponse?.error_message?.trim()
+  if (apiMessage) return apiMessage
+
+  const errorPayload = analysis?.raw_llm_output && typeof analysis.raw_llm_output === 'object'
+    ? (analysis.raw_llm_output as { error?: { message?: string; code?: string } }).error
+    : undefined
+
+  const payloadMessage = errorPayload?.message?.trim() || errorPayload?.code?.trim()
+  return payloadMessage || ''
 }
 
 function KeyValueGrid({ data, skip = [] }: { data?: Record<string, unknown>; skip?: string[] }) {
@@ -619,8 +678,7 @@ export function RFPAnalysis() {
   const isAnalyzed =
     session &&
     session.status !== 'uploaded' &&
-    session.status !== 'analyzing' &&
-    session.status !== 'analysis_failed'
+    session.status !== 'analyzing'
 
   const { data: analysisResponse, isLoading: isAnalysisLoading } = useQuery({
     queryKey: ['rfpAnalysis', sessionId],
@@ -629,6 +687,35 @@ export function RFPAnalysis() {
   })
 
   const analysis = analysisResponse?.analysis
+  const rfpSummary = buildRfpSummary(analysis)
+  const retrievalEnabled = !!analysis && !!rfpSummary
+
+  const { data: retrievalResults } = useQuery({
+    queryKey: ['analysisRetrieval', sessionId, rfpSummary],
+    queryFn: () => knowledgeApi.search(rfpSummary, { item_type: 'project' }),
+    enabled: retrievalEnabled,
+  })
+
+  const similarProjects = toSimilarProjects(retrievalResults)
+
+  const { data: expertiseMatch } = useQuery({
+    queryKey: ['expertiseMatch', sessionId, rfpSummary, similarProjects],
+    queryFn: () => expertiseApi.match({ rfp_summary: rfpSummary, similar_projects: similarProjects }),
+    enabled: retrievalEnabled,
+  })
+
+  const { data: architectureRecommendation } = useQuery({
+    queryKey: ['architectureRecommendation', sessionId, rfpSummary, expertiseMatch, similarProjects],
+    queryFn: () =>
+      architectureApi.recommend({
+        rfp_summary: rfpSummary,
+        expertise_match: expertiseMatch as ExpertiseMatch,
+        similar_projects: similarProjects,
+      }),
+    enabled: retrievalEnabled && !!expertiseMatch,
+  })
+
+  const analysisFailureMessage = getAnalysisFailureMessage(analysisResponse, analysis)
 
   if (isSessionLoading) {
     return (
@@ -682,7 +769,8 @@ export function RFPAnalysis() {
         <AlertTriangle size={56} color="var(--color-error)" style={{ marginBottom: '1.5rem' }} />
         <h2 style={{ marginBottom: '0.75rem' }}>Analysis Failed</h2>
         <p style={{ marginBottom: '2rem', lineHeight: 1.6 }}>
-          The system could not parse or analyze this RFP. Retry after confirming the file is readable text, not a scanned image-only PDF.
+          {analysisFailureMessage ||
+            'The system could not parse or analyze this RFP. Retry after confirming the file is readable text, not a scanned image-only PDF.'}
         </p>
         <div className="flex justify-center gap-4">
           <button className="btn btn-secondary" onClick={() => navigate('/dashboard')}>Back</button>
@@ -745,6 +833,63 @@ export function RFPAnalysis() {
         </div>
       ) : (
         <div className="content-stack">
+          <div className="prep-two-column">
+            <div className="insight-card">
+              <h3 className="section-title">
+                <Building size={20} color="var(--color-primary-light)" />
+                Expertise Match
+              </h3>
+              {expertiseMatch ? (
+                <div className="content-stack">
+                  <KeyValueGrid
+                    data={{
+                      match_type: expertiseMatch.match_type,
+                      confidence: `${Math.round(expertiseMatch.confidence * 100)}%`,
+                      reasoning: expertiseMatch.reasoning,
+                    }}
+                  />
+                  <div>
+                    <h4 style={{ marginBottom: '0.5rem' }}>Matched Projects</h4>
+                    <StrategicList items={expertiseMatch.matched_projects} empty="No matched projects identified." />
+                  </div>
+                </div>
+              ) : (
+                <p className="readable-text" style={{ color: 'var(--color-text-muted)' }}>
+                  Retrieval is still running or no comparable projects were found yet.
+                </p>
+              )}
+            </div>
+            <div className="insight-card">
+              <h3 className="section-title">
+                <Database size={20} color="var(--color-info)" />
+                Architecture Recommendation
+              </h3>
+              {architectureRecommendation ? (
+                <div className="content-stack">
+                  <p className="readable-text" style={{ color: 'var(--color-text-primary)' }}>
+                    {architectureRecommendation.architecture}
+                  </p>
+                  <div>
+                    <h4 style={{ marginBottom: '0.5rem' }}>Reusable Components</h4>
+                    <StrategicList items={architectureRecommendation.reusable_components} empty="No reusable components identified." />
+                  </div>
+                  <div>
+                    <h4 style={{ marginBottom: '0.5rem' }}>Assumptions</h4>
+                    <StrategicList items={architectureRecommendation.assumptions} empty="No assumptions identified." />
+                  </div>
+                  <div>
+                    <h4 style={{ marginBottom: '0.5rem' }}>Validation Questions</h4>
+                    <StrategicList items={architectureRecommendation.validation_questions} empty="No validation questions generated." />
+                  </div>
+                </div>
+              ) : (
+                <p className="readable-text" style={{ color: 'var(--color-text-muted)' }}>
+                  Architecture guidance will appear once expertise matching completes.
+                </p>
+              )}
+            </div>
+          </div>
+
           {(() => {
             const report = analysis.raw_llm_output?.executive_report as ExecutiveReport | undefined
             if (report?.ceo_brief) {

@@ -24,6 +24,7 @@ def analyze_rfp_task(self, session_id: str) -> dict:
     async def _run():
         from app.database import AsyncSessionLocal, engine
         from app.models import RFPSession, RFPAnalysis
+        from app.services.rfp_service import record_analysis_failure
         from app.services.rfp_engine import analyze_rfp_document
         from sqlalchemy import select
 
@@ -40,8 +41,19 @@ def analyze_rfp_task(self, session_id: str) -> dict:
                     return {"status": "error", "reason": "session_not_found"}
 
                 if not session.raw_text:
-                    session.status = "analysis_failed"
-                    await db.commit()
+                    await record_analysis_failure(
+                        db,
+                        session,
+                        error_code="NO_READABLE_TEXT",
+                        message=(
+                            "No readable text could be extracted from the uploaded file. "
+                            "Try a text-based PDF, DOCX, TXT, or MD file."
+                        ),
+                        detail={
+                            "session_id": str(session.id),
+                            "filename": session.original_filename,
+                        },
+                    )
                     return {"status": "error", "reason": "no_text_extracted"}
 
                 # Run extraction
@@ -74,8 +86,13 @@ def analyze_rfp_task(self, session_id: str) -> dict:
                 logger.error(f"[Task] RFP analysis FAILED for session {session_id}: {e}")
                 if session is not None:
                     try:
-                        session.status = "analysis_failed"
-                        await db.commit()
+                        await record_analysis_failure(
+                            db,
+                            session,
+                            error_code="ANALYSIS_FAILED",
+                            message="RFP analysis failed while generating structured insights.",
+                            detail=str(e),
+                        )
                     except Exception:
                         pass
                 raise

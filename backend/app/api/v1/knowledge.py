@@ -122,8 +122,12 @@ async def search_knowledge(
             KnowledgeSearchMatch(
                 point_id=r["point_id"],
                 score=r["score"],
+                vector_score=r.get("vector_score"),
+                rerank_score=r.get("rerank_score"),
+                confidence=r.get("confidence"),
                 text=r["text"],
                 doc_id=r["doc_id"],
+                project_name=r.get("project_name"),
                 item_type=r.get("item_type"),
                 title=r.get("title"),
                 domain=r.get("domain"),

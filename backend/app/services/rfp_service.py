@@ -69,6 +69,63 @@ async def _recover_analysis_if_needed(db: AsyncSession, analysis: RFPAnalysis, s
     return analysis
 
 
+async def _replace_analysis_row(
+    db: AsyncSession,
+    session_id: uuid.UUID,
+    analysis_data: dict[str, object],
+) -> RFPAnalysis:
+    """Replace any prior analysis row with a new snapshot."""
+    existing_result = await db.execute(
+        select(RFPAnalysis).where(RFPAnalysis.session_id == session_id)
+    )
+    for existing in existing_result.scalars().all():
+        await db.delete(existing)
+    await db.flush()
+
+    analysis = RFPAnalysis(session_id=session_id, **analysis_data)
+    db.add(analysis)
+    await db.flush()
+    await db.refresh(analysis)
+    return analysis
+
+
+async def record_analysis_failure(
+    db: AsyncSession,
+    session: RFPSession,
+    *,
+    error_code: str,
+    message: str,
+    detail: object | None = None,
+) -> RFPAnalysis:
+    """
+    Persist a failure analysis row so the frontend can show the real error.
+    """
+    failure_payload: dict[str, object] = {
+        "business_problem": None,
+        "functional_requirements": [],
+        "non_functional_requirements": [],
+        "data_needs": [],
+        "integration_needs": [],
+        "compliance_needs": [],
+        "timeline_risks": [],
+        "missing_information": [],
+        "scope_boundaries": [],
+        "domain_tags": [],
+        "estimated_complexity": None,
+        "raw_llm_output": {
+            "error": {
+                "code": error_code,
+                "message": message,
+                "detail": detail,
+            }
+        },
+    }
+    session.status = "analysis_failed"
+    analysis = await _replace_analysis_row(db, session.id, failure_payload)
+    await db.commit()
+    return analysis
+
+
 async def create_rfp_session(
     db: AsyncSession,
     *,
@@ -168,16 +225,36 @@ async def get_analysis(db: AsyncSession, session_id: uuid.UUID) -> dict:
     analysis = result.scalar_one_or_none()
     session = await get_session_or_404(db, session_id)
     if not analysis:
+        fallback_error_message = None
+        if session.status == "analysis_failed":
+            if not session.raw_text:
+                fallback_error_message = (
+                    "No readable text could be extracted from the uploaded file. "
+                    "This file appears to be scanned or image-only. "
+                    "Upload a text-based PDF/DOCX/TXT/MD file, or enable OCR."
+                )
+            else:
+                fallback_error_message = (
+                    "RFP analysis failed before a structured result could be saved. "
+                    "Check backend logs for the underlying parser or LLM error."
+                )
         return {
             "session_id": str(session_id),
             "status": session.status,
             "analysis": None,
+            "error_message": fallback_error_message,
         }
     analysis = await _recover_analysis_if_needed(db, analysis, session)
+    error_message = None
+    raw_llm_output = analysis.raw_llm_output or {}
+    error_block = raw_llm_output.get("error")
+    if isinstance(error_block, dict):
+        error_message = str(error_block.get("message") or error_block.get("code") or "")
     return {
         "session_id": str(session_id),
-        "status": "analyzed",
+        "status": session.status,
         "analysis": analysis.to_dict(),
+        "error_message": error_message,
     }
 
 

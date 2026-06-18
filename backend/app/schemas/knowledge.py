@@ -45,10 +45,21 @@ class KnowledgeItemListResponse(BaseModel):
 class KnowledgeSearchMatch(BaseModel):
     point_id: str
     score: float
+    vector_score: float | None = None
+    rerank_score: float | None = None
+    confidence: float | None = None
     text: str
     doc_id: str
+    project_name: str | None = None
     item_type: str | None = None
     title: str | None = None
     domain: str | None = None
     tech_stack: list[str] | None = None
     tags: list[str] | None = None
+
+
+class RetrievalResult(BaseModel):
+    project_name: str
+    vector_score: float
+    rerank_score: float
+    confidence: float

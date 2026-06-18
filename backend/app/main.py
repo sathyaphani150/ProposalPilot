@@ -57,9 +57,9 @@ def create_app() -> FastAPI:
         title=settings.APP_NAME,
         description="Internal RFP Intelligence Platform powered by Multi-Agent AI",
         version="1.0.0",
-        docs_url="/api/docs" if not settings.is_production else None,
-        redoc_url="/api/redoc" if not settings.is_production else None,
-        openapi_url="/api/openapi.json" if not settings.is_production else None,
+        docs_url="/docs" if not settings.is_production else None,
+        redoc_url="/redoc" if not settings.is_production else None,
+        openapi_url="/openapi.json" if not settings.is_production else None,
         lifespan=lifespan,
     )
 
@@ -153,12 +153,14 @@ def _register_exception_handlers(app: FastAPI) -> None:
 
 # ── Routers ────────────────────────────────────────────────────────────────
 def _register_routers(app: FastAPI) -> None:
-    from app.api.v1 import health, rfp, knowledge, sessions, war_room, proposals
+    from app.api.v1 import health, rfp, knowledge, sessions, war_room, proposals, expertise, architecture
 
     prefix = "/api/v1"
     app.include_router(health.router, prefix=prefix, tags=["Health"])
     app.include_router(rfp.router, prefix=prefix, tags=["RFP"])
     app.include_router(knowledge.router, prefix=prefix, tags=["Knowledge Base"])
+    app.include_router(expertise.router, prefix=prefix, tags=["Expertise"])
+    app.include_router(architecture.router, prefix=prefix, tags=["Architecture"])
     app.include_router(sessions.router, prefix=prefix, tags=["Sessions"])
     app.include_router(war_room.router, prefix=prefix, tags=["War Room"])
     app.include_router(proposals.router, prefix=prefix, tags=["Proposals"])
