@@ -11,6 +11,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Float,
     Integer,
     String,
     Text,
@@ -174,6 +175,8 @@ class WarRoomSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     human_overrides: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     agent_outputs: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     matched_projects: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    review_loops: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    final_recommendations: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -183,9 +186,80 @@ class WarRoomSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     rfp_session: Mapped["RFPSession"] = relationship(
         back_populates="war_room_sessions"
     )
+    messages: Mapped[list["WarRoomMessage"]] = relationship(
+        back_populates="war_room_session", cascade="all, delete-orphan"
+    )
+    outputs: Mapped[list["WarRoomOutput"]] = relationship(
+        back_populates="war_room_session", cascade="all, delete-orphan"
+    )
     proposals: Mapped[list["Proposal"]] = relationship(
         back_populates="war_room_session", cascade="all, delete-orphan"
     )
+
+    def to_dict(self) -> dict[str, Any]:
+        messages = self.__dict__.get("messages", []) or []
+        return {
+            "id": str(self.id),
+            "rfp_session_id": str(self.rfp_session_id),
+            "status": self.status,
+            "call_notes": self.call_notes,
+            "human_overrides": self.human_overrides or {},
+            "agent_outputs": self.agent_outputs or {},
+            "matched_projects": self.matched_projects or [],
+            "review_loops": self.review_loops,
+            "final_recommendations": self.final_recommendations or {},
+            "discussion_log": [
+                message.to_dict() for message in messages
+            ],
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+        }
+
+
+class WarRoomMessage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "war_room_messages"
+
+    war_room_session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("war_room_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    agent: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    target_agent: Mapped[str] = mapped_column(String(50), nullable=False, default="all")
+    comment: Mapped[str] = mapped_column(Text, nullable=False)
+    message_type: Mapped[str] = mapped_column(String(50), nullable=False, default="discussion")
+    round_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    war_room_session: Mapped["WarRoomSession"] = relationship(back_populates="messages")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "agent": self.agent,
+            "target_agent": self.target_agent,
+            "comment": self.comment,
+            "message_type": self.message_type,
+            "round_index": self.round_index,
+            "payload": self.payload or {},
+            "timestamp": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class WarRoomOutput(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "war_room_outputs"
+
+    war_room_session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("war_room_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    output_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    source_agent: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    war_room_session: Mapped["WarRoomSession"] = relationship(back_populates="outputs")
 
 
 # ── Proposal ──────────────────────────────────────────────────────────────

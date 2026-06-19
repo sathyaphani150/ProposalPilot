@@ -102,14 +102,18 @@ export const knowledgeApi = {
 
 export const warRoomApi = {
   start: async (sessionId: string, callNotes?: string) => {
-    const { data } = await apiClient.post(`/war-room/${sessionId}/start`, {
+    const { data } = await apiClient.post('/war-room/run', {
+      session_id: sessionId,
       call_notes: callNotes,
     })
     return data
   },
 
   override: async (sessionId: string, overrides: Record<string, unknown>) => {
-    const { data } = await apiClient.post(`/war-room/${sessionId}/override`, overrides)
+    const { data } = await apiClient.post('/war-room/override', {
+      session_id: sessionId,
+      override: overrides,
+    })
     return data
   },
 

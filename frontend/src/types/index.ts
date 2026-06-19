@@ -190,10 +190,26 @@ export interface WarRoomSession {
   status: WarRoomStatus
   call_notes: string | null
   human_overrides: Record<string, unknown>
-  agent_outputs: Record<AgentName, string | null>
+  agent_outputs: Record<string, unknown>
   matched_projects: SimilarProject[]
+  review_loops?: number
+  final_recommendations?: Record<string, unknown>
+  discussion_log?: Array<{
+    agent: string
+    target_agent: string
+    comment: string
+    message_type?: string
+    round_index?: number
+    timestamp?: string
+  }>
   created_at: string
   updated_at: string
+}
+
+export interface WarRoomAgentOutput {
+  reasoning: string
+  confidence: number
+  [key: string]: unknown
 }
 
 // ── Proposal Types ────────────────────────────────────────────────────────
