@@ -7,19 +7,64 @@ from pydantic import BaseModel, Field
 from app.war_room.llm_provider import get_war_room_llm_provider
 
 SYSTEM_PROMPT = """
-You are the Tech Architect on an internal proposal war room team.
+You are the Tech Architect on an internal proposal war room team. You
+bring 15+ years of solution architecture experience across web platforms,
+data systems, and enterprise integrations. Your job is to propose a
+concrete, buildable, opportunity-specific technical direction - not a
+generic "modern, scalable, secure" template.
 
-EVIDENCE HIERARCHY - use in this order:
-1. RFP analysis fields - ground truth.
-2. Retrieved past-project matches - only claim reuse tied to a specific matched project; never imply experience not present in a match.
-3. Call notes - client-confirmed, trust above your own inference.
-4. Your own inference - only to fill structural gaps, and it MUST go in `assumptions`, never stated as fact elsewhere in the output.
+EVIDENCE HIERARCHY - use in this strict order of trust:
+1. RFP analysis fields (functional/non-functional requirements,
+   integration_needs, data_needs, compliance_needs) - ground truth.
+2. Retrieved past-project matches - only claim reuse or experience tied to
+   a SPECIFIC matched project; cite which one. Never imply experience that
+   isn't backed by a retrieved match.
+3. Call notes - client-confirmed detail, more trustworthy than your own
+   inference but less than the RFP analysis itself.
+4. Your own inference - only to fill structural gaps the above three
+   don't cover. Every such inference MUST be listed in `assumptions`,
+   never folded into the main recommendation as if it were a known fact.
 
-If human_overrides contains architecture guidance, apply it and state in one sentence what changed because of it.
+ARCHITECTURE PATTERN SELECTION - choose one and justify it against the
+opportunity's actual signals, don't default to microservices by habit:
+- Modular monolith: prefer when the team/timeline is small, requirements
+  are still being clarified (high missing_information count), or the
+  evaluators are likely cost-sensitive.
+- Microservices / service-oriented: justify only if there are genuinely
+  independent scaling domains, multiple integration_needs implying
+  separate bounded contexts, or an explicit NFR for independent
+  team/service deployment.
+- Event-driven / async: recommend when integration_needs include
+  real-time data flows, webhooks, or systems that must stay eventually
+  consistent rather than synchronously coupled.
 
-- architecture_summary: name the actual core workflow, 2-4 sentences.
+NON-FUNCTIONAL REQUIREMENT MAPPING - for every item in the RFP analysis's
+non_functional_requirements, name the specific architectural decision that
+addresses it (e.g. "sub-second search latency" -> "vector index + caching
+layer"), not a restated requirement with nothing attached to it.
+
+COMPLIANCE-DRIVEN CONTROLS - if compliance_needs names a specific
+framework (HIPAA, PCI-DSS, GDPR, SOC2, or similar), call out the
+architectural controls that follow from it (encryption at rest/in
+transit, audit logging, RBAC, data residency, retention policy) rather
+than a vague "we will ensure compliance" statement.
+
+REUSE-FIRST PRINCIPLE - if a retrieved past-project match has reusable
+components relevant to this RFP, prefer recommending reuse over a net-new
+build for that component and say so explicitly. Only design net-new where
+no match supports reuse.
+
+If human_overrides contains architecture guidance (e.g. "keep architecture
+simple", "use offshore-heavy model"), apply it and state in one sentence
+what changed because of it.
+
+OUTPUT FIELDS:
+- architecture_summary: 2-4 sentences naming the actual core workflow and
+  chosen pattern, not generic language.
+- architecture_pattern: one of "modular monolith" | "microservices" |
+  "event-driven" | "hybrid", plus a one-sentence justification.
 - recommended_stack: max 6 items, each tied to a stated requirement.
-- reusable_components: empty list if no retrieved match supports reuse - do not pad this list with generic claims.
+- reusable_components: empty list if no retrieved match supports reuse.
 - assumptions: every tier-4 inference goes here, nowhere else.
 
 Return JSON matching the schema.
@@ -28,6 +73,7 @@ Return JSON matching the schema.
 
 class ArchitectOutput(BaseModel):
     architecture_summary: str
+    architecture_pattern: str = ""
     recommended_stack: list[str] = Field(default_factory=list)
     reusable_components: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
@@ -66,6 +112,10 @@ def _fallback(state: dict[str, Any]) -> ArchitectOutput:
     business_problem = str(analysis.get("business_problem") or "an unclarified proposal opportunity")
     domain_tags = [str(tag).replace("_", " ") for tag in (analysis.get("domain_tags") or [])[:4]]
     override_text = _override_text(state)
+    missing_information = analysis.get("missing_information") or []
+    integration_needs = analysis.get("integration_needs") or []
+    non_functional = analysis.get("non_functional_requirements") or []
+    compliance_needs = [str(item) for item in (analysis.get("compliance_needs") or [])]
     stack = ["FastAPI", "PostgreSQL", "LangGraph", "Qdrant"]
     if analysis.get("integration_needs"):
         stack.append("Adapter layer")
@@ -75,29 +125,42 @@ def _fallback(state: dict[str, Any]) -> ArchitectOutput:
         stack.append("Governed data services")
     if any("security" in tag.lower() or "compliance" in tag.lower() for tag in domain_tags):
         stack.append("Security control plane")
+    pattern = "modular monolith"
+    pattern_justification = "Preferred because scope is still being clarified and a simpler delivery shape reduces coordination overhead."
+    if any(word in override_text.lower() for word in ["simple", "mvp", "fixed-price", "fixed price"]):
+        pattern_justification = "Selected to honor the override to keep scope and operating complexity controlled."
+    elif any(
+        any(signal in str(item).lower() for signal in ["real-time", "realtime", "webhook", "event", "stream"])
+        for item in integration_needs
+    ):
+        pattern = "event-driven"
+        pattern_justification = "Selected because the integration profile suggests asynchronous coordination across systems."
+    elif len(integration_needs) >= 3 and len(missing_information) <= 1:
+        pattern = "microservices"
+        pattern_justification = "Selected because multiple integration domains imply clearer bounded contexts and independent scaling concerns."
+    elif integration_needs and non_functional:
+        pattern = "hybrid"
+        pattern_justification = "Selected because the opportunity combines integration-heavy workflows with non-functional demands that benefit from selective decomposition."
+    reusable_components = [
+        f"{project.get('title')} pattern"
+        for project in context[:3]
+        if isinstance(project, dict) and project.get("title")
+    ]
     return ArchitectOutput(
         architecture_summary=(
-            f"Use an API-first modular architecture for {session_title} at {client_name}. "
+            f"Use a {pattern} architecture for {session_title} at {client_name}. "
             f"The current business problem is: {business_problem}. "
             "Keep workflow, retrieval, proposal assembly, and integration boundaries explicit so delivery can stay modular and controllable. "
-            "Avoid over-engineering until scale, compliance, and source-system readiness are confirmed."
+            f"The architecture should directly address {len(integration_needs)} integration signals, {len(non_functional)} non-functional requirements, and compliance controls such as "
+            f"{', '.join(compliance_needs[:2]) if compliance_needs else 'auditability and access control'}."
             + (f" Human override applied: {override_text}." if override_text else "")
         ),
+        architecture_pattern=f"{pattern}: {pattern_justification}",
         recommended_stack=stack[:6],
-        reusable_components=[
-            *[
-                f"{project.get('title')} pattern"
-                for project in (state.get("similar_projects") or [])[:2]
-                if isinstance(project, dict) and project.get("title")
-            ],
-            "retrieval service",
-            "document parsing pipeline",
-            "proposal assembly templates",
-            "agent state persistence",
-        ][:6],
+        reusable_components=reusable_components[:6],
         assumptions=[
             f"{client_name} will confirm integration access and data ownership.",
-            "Initial delivery can start with a modular monolith and evolve selectively.",
+            "Initial delivery can start with the selected architecture pattern and evolve selectively once operational evidence is available.",
             f"Domain focus: {', '.join(domain_tags) if domain_tags else 'general proposal workflow'}.",
         ],
         technical_risks=[
@@ -119,7 +182,7 @@ def _fallback(state: dict[str, Any]) -> ArchitectOutput:
             f"What specifically makes {session_title} different from other opportunities in the pipeline?",
         ],
         reasoning=(
-            f"Architecture decisions are grounded in {len(context)} context items, {len(domain_tags)} domain tags, and complexity {analysis.get('estimated_complexity') or 'medium'}."
+            f"Architecture decisions are grounded in {len(context)} context items, {len(domain_tags)} domain tags, {len(non_functional)} non-functional requirements, and complexity {analysis.get('estimated_complexity') or 'medium'}."
             + (f" Override changed the scope toward: {override_text}." if override_text else "")
         ),
         confidence=0.78,

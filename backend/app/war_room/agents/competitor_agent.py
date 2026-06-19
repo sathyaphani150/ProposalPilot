@@ -8,20 +8,56 @@ from app.war_room.llm_provider import get_war_room_llm_provider
 
 SYSTEM_PROMPT = """
 You are the Competitor Strategist on an internal proposal war room team.
+You bring experience reading RFP evaluation signals and positioning bids
+to win, not just listing generic strengths.
 
-Ground every claim in the RFP analysis, retrieved past-project matches, and call notes. Do not name or imply knowledge of specific real competitor companies unless one is explicitly named in the RFP text or call notes - speak in terms of competitor archetypes (e.g. "a generalist systems integrator", "a point-solution vendor") grounded in what the RFP is actually asking for.
+Ground every claim in the RFP analysis, retrieved past-project matches,
+and call notes. Do not name or imply knowledge of specific real competitor
+companies unless one is explicitly named in the RFP text or call notes -
+speak in terms of competitor archetypes (e.g. "a generalist systems
+integrator", "a point-solution vendor", "an offshore low-cost provider")
+grounded in what the RFP is actually asking for.
 
-differentiators: each item must trace to either a retrieved past-project match (name which one) or a stated capability - not aspirational claims. Max 5 items.
-win_themes: max 4, each a one-sentence theme tied to a specific RFP requirement or evaluation signal, not generic "we deliver quality."
-competitive_risks: name the specific RFP signal that creates the risk (e.g. a tight timeline, an unusual compliance ask) - not vague caution. Max 5 items.
+EVALUATION SIGNAL INFERENCE - if the RFP text or analysis suggests how
+proposals will be scored (emphasis on price, technical depth, prior
+experience, or timeline), infer which dimension the evaluator likely
+weighs most and lead your positioning with that dimension.
 
-If human_overrides includes positioning guidance (e.g. "use our recruitment project story"), it must appear directly in differentiators.
+POSITIONING STRATEGY - pick ONE primary stance and justify it against the
+RFP's actual signals, don't hedge across all of them:
+- Price leader: justify only if the RFP signals cost sensitivity.
+- Technical/quality leader: justify with specific technical depth tied to
+  the architect's output.
+- Risk-reduction specialist: justify with evidence of a low-risk delivery
+  approach (relevant past matches, clear methodology).
+- Domain-niche specialist: justify only if a retrieved match shows real
+  domain-specific experience.
+
+OBJECTION PRE-EMPTION - identify the single most likely doubt an evaluator
+would have about us winning this (e.g. "no direct experience in this
+specific domain") and address it proactively rather than waiting to be
+asked.
+
+differentiators: each item must trace to either a retrieved past-project
+match (name which one) or a stated capability - not aspirational claims.
+Max 5 items.
+win_themes: max 4, each a one-sentence theme tied to a specific RFP
+requirement or evaluation signal.
+competitive_risks: name the specific RFP signal creating the risk. Max 5.
+
+If human_overrides includes positioning guidance (e.g. "use our
+recruitment project story"), it must appear directly in differentiators.
+
+OUTPUT FIELDS:
+- positioning_strategy: one of the four stances above, one sentence why.
+- differentiators, win_themes, competitive_risks: as above.
 
 Return JSON matching the schema.
 """
 
 
 class CompetitorOutput(BaseModel):
+    positioning_strategy: str = ""
     differentiators: list[str] = Field(default_factory=list)
     win_themes: list[str] = Field(default_factory=list)
     competitive_risks: list[str] = Field(default_factory=list)
@@ -54,28 +90,38 @@ def _override_text(state: dict[str, Any]) -> str:
 
 def _fallback(state: dict[str, Any]) -> CompetitorOutput:
     analysis = state.get("rfp_analysis") or {}
+    architect = state.get("architect_output") or {}
     similar_projects = state.get("similar_projects") or []
     session_title = str(state.get("session_title") or "the RFP")
     tags = [str(tag).replace("_", " ") for tag in (analysis.get("domain_tags") or [])[:4]]
     override_text = _override_text(state)
     strongest = similar_projects[0]["title"] if similar_projects else "internal delivery evidence"
+    pricing_signals = " ".join(str(item) for item in (analysis.get("timeline_risks") or []) + (analysis.get("missing_information") or []))
+    positioning_strategy = "Risk-reduction specialist: the opportunity benefits from a controlled delivery posture because unresolved scope and delivery questions remain."
+    if similar_projects and tags:
+        positioning_strategy = f"Domain-niche specialist: use {strongest} to prove relevant delivery experience in {tags[0]}."
+    elif any(term in pricing_signals.lower() for term in ["budget", "cost", "price"]):
+        positioning_strategy = "Price leader: the evaluator appears cost-sensitive, so commercial predictability should lead the narrative."
+    elif architect.get("architecture_pattern"):
+        positioning_strategy = "Technical/quality leader: the bid can lead with a concrete architecture and implementation discipline rather than generic claims."
     return CompetitorOutput(
+        positioning_strategy=positioning_strategy,
         differentiators=[
             f"Grounded proposal strategy backed by internal evidence for {session_title}.",
             "Human-in-the-loop scope control before fixed commitments.",
-            "Modular delivery model that keeps cost and risk visible.",
+            f"Technical direction anchored in {architect.get('architecture_pattern') or 'a concrete buildable architecture'}.",
             f"Positioning aligned to {', '.join(tags) if tags else 'the stated opportunity'}.",
             *([f"Positioning override applied: {override_text}."] if override_text else []),
         ][:5],
         win_themes=[
-            "credible delivery plan",
-            "lower execution risk",
-            "faster path to business value",
-            "clear assumptions and commercial discipline",
+            "Lead with credible delivery proof tied to the buyer's stated requirements.",
+            "Reduce execution risk by making assumptions, controls, and dependencies explicit.",
+            "Show a faster path to business value through scoped delivery phases.",
+            "Use commercial discipline as a differentiator rather than burying it in pricing detail.",
         ][:4],
         competitive_risks=[
-            f"Competitors may undercut price by hiding assumptions on {session_title}.",
-            "Generic AI proposals may miss buyer-specific risks.",
+            f"Competitors may undercut price by hiding assumptions around {', '.join(str(item) for item in (analysis.get('integration_needs') or [])[:2]) or 'integration scope'}.",
+            f"Limited directly proven experience in {tags[0] if tags else 'this niche'} could become an evaluator concern without strong evidence mapping.",
         ][:5],
         value_proposition=(
             f"Use {strongest} as proof that the team can deliver adjacent work, then differentiate on process rigor and delivery control for {session_title}."
