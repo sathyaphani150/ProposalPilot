@@ -173,7 +173,6 @@ export type AgentName =
   | 'cfo'
   | 'competitor'
   | 'proposal'
-  | 'supervisor'
 
 export type AgentStatus = 'idle' | 'thinking' | 'writing' | 'done' | 'error'
 

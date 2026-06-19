@@ -4,7 +4,6 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import {
-  Bot,
   BriefcaseBusiness,
   Calculator,
   FileText,
@@ -13,17 +12,17 @@ import {
   Shield,
   UserRoundCog,
 } from 'lucide-react'
+
 import { rfpApi, warRoomApi } from '@/api/endpoints'
 import { getErrorMessage } from '@/api/client'
-import type { AgentName, WarRoomSession } from '@/types'
 import { useWarRoom } from '@/hooks/useWarRoom'
+import type { AgentName, WarRoomSession } from '@/types'
 
 const agentConfig: Array<{ key: AgentName; label: string; icon: ReactNode; color: string }> = [
   { key: 'architect', label: 'Tech Architect', icon: <UserRoundCog size={20} />, color: 'var(--color-primary-light)' },
   { key: 'cfo', label: 'CFO / Pricing', icon: <Calculator size={20} />, color: 'var(--color-success)' },
   { key: 'competitor', label: 'Competitor Strategist', icon: <Shield size={20} />, color: 'var(--color-warning)' },
   { key: 'proposal', label: 'Proposal Writer', icon: <FileText size={20} />, color: 'var(--color-info)' },
-  { key: 'supervisor', label: 'Supervisor', icon: <Bot size={20} />, color: 'var(--color-accent)' },
 ]
 
 function formatOutputValue(value: unknown): string {
@@ -85,16 +84,6 @@ function renderAgentOutput(agent: AgentName, output: unknown): string {
     add('Value Proposition', 'value_proposition')
     add('Executive Messaging', 'executive_messaging')
   } else {
-    if (agent === 'supervisor') {
-      add('Status', 'status')
-      add('Summary', 'summary')
-      add('Timeline (weeks)', 'timeline_weeks')
-      add('Approval Notes', 'approval_notes')
-      add('Confidence', 'confidence')
-      add('Loop Reason', 'loop_reason')
-      add('Should Loop', 'should_loop')
-      return sections.length > 0 ? sections.join('\n\n') : JSON.stringify(output, null, 2)
-    }
     add('Executive Summary', 'executive_summary')
     add('Client Problem Restatement', 'client_problem_restatement')
     add('Proposed Solution Narrative', 'proposed_solution_narrative')
@@ -301,33 +290,7 @@ export function WarRoom() {
               </div>
             ))}
           </div>
-
-        {warRoom.discussion_log?.length ? (
-          <div className="card" style={{ marginTop: '1rem' }}>
-            <h3 style={{ marginBottom: '1rem', color: 'var(--color-text-primary)' }}>Discussion Log</h3>
-            <div style={{ display: 'grid', gap: '0.75rem' }}>
-              {warRoom.discussion_log.map((entry, index) => (
-                <div key={`${entry.agent}-${index}`} style={{ padding: '0.85rem 1rem', borderRadius: '14px', background: 'var(--color-surface-2)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', marginBottom: '0.35rem' }}>
-                    <strong style={{ color: 'var(--color-primary-light)' }}>{entry.agent} → {entry.target_agent}</strong>
-                    <span style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>{entry.timestamp ? new Date(entry.timestamp).toLocaleString() : 'just now'}</span>
-                  </div>
-                  <p style={{ margin: 0, color: 'var(--color-text-secondary)', lineHeight: 1.6 }}>{entry.comment}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {warRoom.final_recommendations ? (
-          <div className="card" style={{ marginTop: '1rem' }}>
-            <h3 style={{ marginBottom: '1rem', color: 'var(--color-text-primary)' }}>Supervisor Validation</h3>
-            <pre style={{ whiteSpace: 'pre-wrap', margin: 0, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', lineHeight: 1.6 }}>
-              {JSON.stringify(warRoom.final_recommendations, null, 2)}
-            </pre>
-          </div>
-        ) : null}
-      </>
+        </>
       )}
     </div>
   )
