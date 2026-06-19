@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Mapping
 
 from loguru import logger
 from sqlalchemy import select
@@ -21,6 +21,7 @@ from app.models import (
 )
 from app.war_room import ProposalState, run_war_room_graph
 from app.war_room.context import get_relevant_context
+from app.ws_registry import broadcast
 
 
 def _ensure_dict(value: Any) -> dict[str, Any]:
@@ -151,7 +152,7 @@ def _persist_war_room(
     return war_room
 
 
-def _serialize_outputs(state: ProposalState) -> dict[str, Any]:
+def _serialize_outputs(state: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "architect": _ensure_dict(state.get("architect_output")),
         "cfo": _ensure_dict(state.get("cfo_output")),
@@ -166,10 +167,24 @@ async def _execute_graph(war_room_id: uuid.UUID, initial_state: ProposalState) -
     from app.database import AsyncSessionLocal
 
     try:
-        result_state = await run_war_room_graph(initial_state)
+        from app.war_room.graph import get_compiled_graph
+
+        session_key = str(war_room_id)
+        graph = get_compiled_graph()
+        result_state: dict[str, Any] = dict(initial_state)
+        async for update in graph.astream(initial_state, config={"configurable": {"thread_id": session_key}}, stream_mode="updates"):
+            for node_name, node_output in update.items():
+                if isinstance(node_output, dict):
+                    result_state.update(node_output)
+                await broadcast(session_key, {"agent": node_name, "type": "output", "content": node_output})
         async with AsyncSessionLocal() as background_db:
             result = await background_db.execute(
-                select(WarRoomSession).where(WarRoomSession.id == war_room_id)
+                select(WarRoomSession)
+                .options(
+                    selectinload(WarRoomSession.messages),
+                    selectinload(WarRoomSession.outputs),
+                )
+                .where(WarRoomSession.id == war_room_id)
             )
             war_room = result.scalar_one_or_none()
             if not war_room:
@@ -211,6 +226,7 @@ async def _execute_graph(war_room_id: uuid.UUID, initial_state: ProposalState) -
                 )
 
             await background_db.commit()
+        await broadcast(session_key, {"type": "status", "content": "complete"})
     except Exception as exc:
         async with AsyncSessionLocal() as background_db:
             result = await background_db.execute(
@@ -221,6 +237,7 @@ async def _execute_graph(war_room_id: uuid.UUID, initial_state: ProposalState) -
                 war_room.status = "failed"
                 war_room.error_message = str(exc)
                 await background_db.commit()
+        await broadcast(str(war_room_id), {"type": "status", "content": "failed", "error": str(exc)})
 
 
 async def start_war_room(
@@ -245,20 +262,34 @@ async def start_war_room(
         human_overrides=human_overrides,
     )
     session.status = "war_room_running"
+    war_room = WarRoomSession(
+        rfp_session_id=session.id,
+        status="running",
+        call_notes=call_notes,
+        human_overrides=human_overrides or {},
+        agent_outputs={},
+        matched_projects=_ensure_list(context.get("similar_projects")),
+        review_loops=0,
+        final_recommendations={},
+    )
+    db.add(war_room)
+    await db.flush()
+    await db.commit()
+    await db.refresh(war_room)
+
+    initial_state = _build_initial_state(
+        session=session,
+        analysis=analysis,
+        context=context,
+        call_notes=call_notes,
+        human_overrides=human_overrides,
+    )
     logger.info(
         "Running war room graph for session {} with {} context items",
         session_id,
         len(initial_state.get("retrieved_context") or []),
     )
-    final_state = await run_war_room_graph(initial_state)
-    war_room = _persist_war_room(
-        db=db,
-        session=session,
-        state=final_state,
-        call_notes=call_notes,
-        human_overrides=human_overrides,
-    )
-    await db.flush()
+    asyncio.create_task(_execute_graph(war_room.id, initial_state))
     return war_room
 
 

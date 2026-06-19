@@ -16,6 +16,7 @@ import {
 import { rfpApi, warRoomApi } from '@/api/endpoints'
 import { getErrorMessage } from '@/api/client'
 import type { AgentName, WarRoomSession } from '@/types'
+import { useWarRoom } from '@/hooks/useWarRoom'
 
 const agentConfig: Array<{ key: AgentName; label: string; icon: ReactNode; color: string }> = [
   { key: 'architect', label: 'Tech Architect', icon: <UserRoundCog size={20} />, color: 'var(--color-primary-light)' },
@@ -101,6 +102,7 @@ export function WarRoom() {
   const navigate = useNavigate()
   const [callNotes, setCallNotes] = useState('')
   const [overrideText, setOverrideText] = useState('')
+  const { agentStatus } = useWarRoom(sessionId)
 
   const { data: session } = useQuery({
     queryKey: ['rfpSession', sessionId],
@@ -229,10 +231,20 @@ export function WarRoom() {
           <div style={{ display: 'grid', gap: '1rem' }}>
             {agentConfig.map((agent) => (
               <div key={agent.key} className="card">
-                <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', color: agent.color }}>
-                  {agent.icon}
-                  {agent.label}
-                </h3>
+                {(() => {
+                  const agentDone = agentStatus[agent.key] === 'done' || Boolean(warRoom.agent_outputs?.[agent.key])
+                  return (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem' }}>
+                      <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0, color: agent.color }}>
+                        {agent.icon}
+                        {agent.label}
+                      </h3>
+                      <span className={`badge ${agentDone ? 'badge-done' : busy ? 'badge-war-room' : ''}`}>
+                        {agentDone ? 'done' : busy ? 'thinking' : 'idle'}
+                      </span>
+                    </div>
+                  )
+                })()}
                 <pre
                   style={{
                     whiteSpace: 'pre-wrap',
@@ -242,11 +254,11 @@ export function WarRoom() {
                     margin: 0,
                   }}
                 >
-                {renderAgentOutput(agent.key, warRoom.agent_outputs?.[agent.key])}
-              </pre>
-            </div>
-          ))}
-        </div>
+                  {renderAgentOutput(agent.key, warRoom.agent_outputs?.[agent.key])}
+                </pre>
+              </div>
+            ))}
+          </div>
 
         {warRoom.discussion_log?.length ? (
           <div className="card" style={{ marginTop: '1rem' }}>

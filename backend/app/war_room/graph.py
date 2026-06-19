@@ -108,10 +108,45 @@ class _FallbackWarRoomGraph:
             if not current_state.get("final_recommendations", {}).get("should_loop"):
                 return current_state
 
+    async def astream(self, state: ProposalState, *, config: dict[str, Any] | None = None, stream_mode: str = "updates"):
+        current_state: ProposalState = dict(state)
+        while True:
+            architect_update = await run_architect_agent(current_state)
+            current_state.update(architect_update)
+            yield {"architect": architect_update}
 
-async def run_war_room_graph(state: ProposalState) -> ProposalState:
+            cfo_update = await run_cfo_agent(current_state)
+            current_state.update(cfo_update)
+            yield {"cfo": cfo_update}
+
+            competitor_update = await run_competitor_agent(current_state)
+            current_state.update(competitor_update)
+            yield {"competitor": competitor_update}
+
+            discussion_update = await _discussion_node(current_state)
+            current_state.update(discussion_update)
+            yield {"discussion": discussion_update}
+
+            proposal_update = await run_proposal_agent(current_state)
+            current_state.update(proposal_update)
+            yield {"proposal": proposal_update}
+
+            supervisor_update = await _supervisor_node(current_state)
+            current_state.update(supervisor_update)
+            yield {"supervisor": supervisor_update}
+
+            if not current_state.get("final_recommendations", {}).get("should_loop"):
+                return
+
+
+def get_compiled_graph():
     global _compiled_graph
     if _compiled_graph is None:
         _compiled_graph = build_war_room_graph()
-    result = await _compiled_graph.ainvoke(state)
+    return _compiled_graph
+
+
+async def run_war_room_graph(state: ProposalState) -> ProposalState:
+    graph = get_compiled_graph()
+    result = await graph.ainvoke(state)
     return result

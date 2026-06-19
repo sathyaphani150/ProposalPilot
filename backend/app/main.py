@@ -71,6 +71,19 @@ def create_app() -> FastAPI:
     _register_exception_handlers(app)
     _register_routers(app)
 
+    from fastapi import WebSocket, WebSocketDisconnect
+    from app.ws_registry import subscribe, unsubscribe
+
+    @app.websocket("/ws/war-room/{session_id}")
+    async def war_room_ws(websocket: WebSocket, session_id: str):
+        await websocket.accept()
+        await subscribe(session_id, websocket)
+        try:
+            while True:
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            unsubscribe(session_id, websocket)
+
     return app
 
 
