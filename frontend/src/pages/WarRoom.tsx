@@ -28,10 +28,22 @@ const agentConfig: Array<{ key: AgentName; label: string; icon: ReactNode; color
 
 function formatOutputValue(value: unknown): string {
   if (Array.isArray(value)) {
-    return value.map((item) => `- ${typeof item === 'string' ? item : JSON.stringify(item, null, 2)}`).join('\n')
+    return value
+      .map((item) => {
+        if (typeof item === 'string') return `- ${item}`
+        if (item && typeof item === 'object') {
+          return `- ${Object.entries(item as Record<string, unknown>)
+            .map(([key, nestedValue]) => `${key}: ${typeof nestedValue === 'object' ? JSON.stringify(nestedValue) : String(nestedValue)}`)
+            .join(', ')}`
+        }
+        return `- ${String(item)}`
+      })
+      .join('\n')
   }
   if (value && typeof value === 'object') {
-    return JSON.stringify(value, null, 2)
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, nestedValue]) => `${key}: ${typeof nestedValue === 'object' ? JSON.stringify(nestedValue) : String(nestedValue)}`)
+      .join('\n')
   }
   return String(value ?? '')
 }
@@ -51,6 +63,7 @@ function renderAgentOutput(agent: AgentName, output: unknown): string {
 
   if (agent === 'architect') {
     add('Architecture Summary', 'architecture_summary')
+    add('Architecture Pattern', 'architecture_pattern')
     add('Recommended Stack', 'recommended_stack')
     add('Reusable Components', 'reusable_components')
     add('Assumptions', 'assumptions')
@@ -60,10 +73,12 @@ function renderAgentOutput(agent: AgentName, output: unknown): string {
     add('Team Structure', 'team_structure')
     add('Estimated Duration (weeks)', 'estimated_duration_weeks')
     add('Effort Breakdown', 'effort_breakdown')
+    add('Pricing Model', 'pricing_model_recommendation')
     add('Cost Estimate', 'cost_estimate')
     add('Financial Risks', 'financial_risks')
     add('Margin Assessment', 'margin_assessment')
   } else if (agent === 'competitor') {
+    add('Positioning Strategy', 'positioning_strategy')
     add('Differentiators', 'differentiators')
     add('Win Themes', 'win_themes')
     add('Competitive Risks', 'competitive_risks')
@@ -81,11 +96,17 @@ function renderAgentOutput(agent: AgentName, output: unknown): string {
       return sections.length > 0 ? sections.join('\n\n') : JSON.stringify(output, null, 2)
     }
     add('Executive Summary', 'executive_summary')
+    add('Client Problem Restatement', 'client_problem_restatement')
+    add('Proposed Solution Narrative', 'proposed_solution_narrative')
     add('Proposed Solution', 'proposed_solution')
     add('Architecture Section', 'architecture_section')
+    add('Commercial Summary', 'commercial_summary')
     add('Delivery Approach', 'delivery_approach')
     add('Cost Section', 'cost_section')
     add('Competitive Positioning', 'competitive_positioning')
+    add('Compliance Matrix', 'compliance_matrix')
+    add('Open Risks And Assumptions', 'open_risks_and_assumptions')
+    add('Consistency Flags', 'consistency_flags')
     add('Risks', 'risks')
     add('Assumptions', 'assumptions')
     add('Exclusions', 'exclusions')

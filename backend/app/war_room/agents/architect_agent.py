@@ -104,6 +104,52 @@ def _override_text(state: dict[str, Any]) -> str:
     return " | ".join(parts)
 
 
+def _suggest_stack(analysis: dict[str, Any], domain_tags: list[str]) -> list[str]:
+    business_problem = str(analysis.get("business_problem") or "").lower()
+    integration_needs = [str(item).lower() for item in (analysis.get("integration_needs") or [])]
+    non_functional = [str(item).lower() for item in (analysis.get("non_functional_requirements") or [])]
+    compliance_needs = [str(item).lower() for item in (analysis.get("compliance_needs") or [])]
+    tags_text = " ".join(domain_tags).lower()
+    combined = " ".join([business_problem, tags_text, *integration_needs, *non_functional, *compliance_needs])
+
+    if any(keyword in combined for keyword in ["bus", "fleet", "vehicle", "manufactur", "procurement", "supply", "commissioning"]):
+        stack = [
+            "ERP and supply-chain workflow platform",
+            "Vendor and contract management portal",
+            "QA inspection and commissioning tracker",
+            "Document management and compliance repository",
+        ]
+        if integration_needs:
+            stack.append("API and EDI integration layer")
+        if any(keyword in combined for keyword in ["gps", "telemetry", "tracking", "maintenance", "operations"]):
+            stack.append("Fleet operations and telemetry module")
+        return stack[:6]
+
+    if any(keyword in combined for keyword in ["health", "patient", "hospital", "clinic"]):
+        stack = [
+            "Secure application services",
+            "Clinical or operational data store",
+            "Identity and access control",
+            "Audit logging and reporting layer",
+        ]
+        if integration_needs:
+            stack.append("Healthcare system integration layer")
+        if any("search" in item or "latency" in item for item in non_functional):
+            stack.append("Indexed search and caching layer")
+        return stack[:6]
+
+    stack = ["FastAPI", "PostgreSQL", "LangGraph", "Qdrant"]
+    if integration_needs:
+        stack.append("Adapter layer")
+    if any("search" in tag.lower() or "retrieval" in tag.lower() for tag in domain_tags):
+        stack.append("Semantic retrieval pipeline")
+    if any("data" in tag.lower() or "analytics" in tag.lower() for tag in domain_tags):
+        stack.append("Governed data services")
+    if any("security" in tag.lower() or "compliance" in tag.lower() for tag in domain_tags):
+        stack.append("Security control plane")
+    return stack[:6]
+
+
 def _fallback(state: dict[str, Any]) -> ArchitectOutput:
     analysis = state.get("rfp_analysis") or {}
     context = state.get("similar_projects") or []
@@ -116,15 +162,7 @@ def _fallback(state: dict[str, Any]) -> ArchitectOutput:
     integration_needs = analysis.get("integration_needs") or []
     non_functional = analysis.get("non_functional_requirements") or []
     compliance_needs = [str(item) for item in (analysis.get("compliance_needs") or [])]
-    stack = ["FastAPI", "PostgreSQL", "LangGraph", "Qdrant"]
-    if analysis.get("integration_needs"):
-        stack.append("Adapter layer")
-    if any("search" in tag.lower() or "retrieval" in tag.lower() for tag in domain_tags):
-        stack.append("Semantic retrieval pipeline")
-    if any("data" in tag.lower() or "analytics" in tag.lower() for tag in domain_tags):
-        stack.append("Governed data services")
-    if any("security" in tag.lower() or "compliance" in tag.lower() for tag in domain_tags):
-        stack.append("Security control plane")
+    stack = _suggest_stack(analysis, domain_tags)
     pattern = "modular monolith"
     pattern_justification = "Preferred because scope is still being clarified and a simpler delivery shape reduces coordination overhead."
     if any(word in override_text.lower() for word in ["simple", "mvp", "fixed-price", "fixed price"]):
