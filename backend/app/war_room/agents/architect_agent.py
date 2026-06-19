@@ -52,6 +52,9 @@ def _override_text(state: dict[str, Any]) -> str:
             )
         elif isinstance(override, str) and override.strip():
             parts.append(override.strip())
+    call_notes = state.get("call_notes")
+    if isinstance(call_notes, str) and call_notes.strip():
+        parts.append(call_notes.strip())
     return " | ".join(parts)
 
 

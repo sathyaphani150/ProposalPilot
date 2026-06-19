@@ -102,7 +102,6 @@ export function WarRoom() {
   const navigate = useNavigate()
   const [callNotes, setCallNotes] = useState('')
   const [overrideText, setOverrideText] = useState('')
-  const { agentStatus } = useWarRoom(sessionId)
 
   const { data: session } = useQuery({
     queryKey: ['rfpSession', sessionId],
@@ -118,14 +117,19 @@ export function WarRoom() {
     queryKey: ['warRoomStatus', sessionId],
     queryFn: () => warRoomApi.getStatus(sessionId!),
     enabled: !!sessionId,
+    refetchInterval: (query) => {
+      const latestWarRoom = (query.state.data as { war_room?: WarRoomSession | null } | undefined)?.war_room
+      return latestWarRoom?.status === 'running' ? 2000 : false
+    },
   })
 
   const warRoom = statusResponse?.war_room as WarRoomSession | null | undefined
+  const { agentStatus } = useWarRoom(warRoom?.id)
 
   const { mutate: startWarRoom, isPending: isStarting } = useMutation({
     mutationFn: () => warRoomApi.start(sessionId!, callNotes),
     onSuccess: () => {
-      toast.success('War Room completed with grounded agent perspectives.')
+      toast.success('War Room started. Agent outputs will appear as the run completes.')
       refetch()
     },
     onError: (error) => toast.error('Failed to run War Room: ' + getErrorMessage(error)),
@@ -215,7 +219,16 @@ export function WarRoom() {
           <div className="card" style={{ marginBottom: '1.5rem' }}>
             <div className="flex justify-between items-center" style={{ flexWrap: 'wrap', gap: '1rem' }}>
               <div>
-                <span className="badge badge-done" style={{ textTransform: 'uppercase' }}>
+                <span
+                  className={`badge ${
+                    warRoom.status === 'failed'
+                      ? ''
+                      : warRoom.status === 'complete'
+                        ? 'badge-done'
+                        : 'badge-war-room'
+                  }`}
+                  style={{ textTransform: 'uppercase' }}
+                >
                   {warRoom.status}
                 </span>
                 <span style={{ marginLeft: '0.75rem', color: 'var(--color-text-secondary)' }}>
@@ -228,19 +241,27 @@ export function WarRoom() {
             </div>
           </div>
 
+          {warRoom.error_message ? (
+            <div className="card" style={{ marginBottom: '1.5rem', border: '1px solid rgba(239, 68, 68, 0.35)' }}>
+              <h3 style={{ marginBottom: '0.5rem', color: '#f87171' }}>War Room Failed</h3>
+              <p style={{ margin: 0, color: 'var(--color-text-secondary)' }}>{warRoom.error_message}</p>
+            </div>
+          ) : null}
+
           <div style={{ display: 'grid', gap: '1rem' }}>
             {agentConfig.map((agent) => (
               <div key={agent.key} className="card">
                 {(() => {
                   const agentDone = agentStatus[agent.key] === 'done' || Boolean(warRoom.agent_outputs?.[agent.key])
+                  const agentBusy = warRoom.status === 'running' && !agentDone
                   return (
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem' }}>
                       <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0, color: agent.color }}>
                         {agent.icon}
                         {agent.label}
                       </h3>
-                      <span className={`badge ${agentDone ? 'badge-done' : busy ? 'badge-war-room' : ''}`}>
-                        {agentDone ? 'done' : busy ? 'thinking' : 'idle'}
+                      <span className={`badge ${agentDone ? 'badge-done' : agentBusy ? 'badge-war-room' : ''}`}>
+                        {agentDone ? 'done' : agentBusy ? 'thinking' : 'idle'}
                       </span>
                     </div>
                   )

@@ -53,6 +53,9 @@ def _override_text(state: dict[str, Any]) -> str:
             )
         elif isinstance(override, str) and override.strip():
             parts.append(override.strip())
+    call_notes = state.get("call_notes")
+    if isinstance(call_notes, str) and call_notes.strip():
+        parts.append(call_notes.strip())
     return " | ".join(parts)
 
 
@@ -150,6 +153,8 @@ Return a JSON object matching the schema.
             f"{state.get('session_title') or 'the RFP'} is asking for a controlled way to solve: "
             f"{analysis.get('business_problem') or 'the stated business problem'}."
         )
-    if not output.compliance_matrix:
-        output.compliance_matrix = _build_compliance_matrix(state.get("rfp_analysis") or {}, output.proposed_solution)
+    output.compliance_matrix = _build_compliance_matrix(state.get("rfp_analysis") or {}, output.proposed_solution)
+    override_text = _override_text(state)
+    if override_text and not any(override_text in flag for flag in output.consistency_flags):
+        output.consistency_flags.append(f"Human override reflected in final narrative: {override_text}.")
     return {"proposal_output": output.model_dump()}

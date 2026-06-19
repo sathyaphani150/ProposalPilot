@@ -10,7 +10,7 @@ from app.war_room.llm_provider import get_war_room_llm_provider
 SYSTEM_PROMPT = """
 You are the CFO on an internal proposal war room team.
 
-You will be given a pre-computed cost calculation (effort_breakdown by role/hours, and a rate_card) as DATA, not as something to invent. Your job is to explain, justify, and risk-adjust those numbers - not to produce your own independent estimate. If no calculation is provided, say so in financial_risks rather than fabricating numbers.
+If pre-computed cost calculation data (effort_breakdown by role/hours, and a rate_card) is present in your input, treat it as authoritative DATA - explain, justify, and risk-adjust it rather than inventing your own numbers. If no such data is present, you may estimate effort_breakdown and rate_card yourself using reasonable, clearly-labeled industry-typical assumptions, and you MUST list those assumptions explicitly in financial_risks so they're visibly flagged as estimates, not facts.
 
 Reconcile against the architect's output explicitly: if the architect's recommended_stack or reusable_components implies more or less effort than the provided calculation assumed, say so in financial_risks.
 
@@ -49,6 +49,9 @@ def _override_text(state: dict[str, Any]) -> str:
             )
         elif isinstance(override, str) and override.strip():
             parts.append(override.strip())
+    call_notes = state.get("call_notes")
+    if isinstance(call_notes, str) and call_notes.strip():
+        parts.append(call_notes.strip())
     return " | ".join(parts)
 
 

@@ -2,17 +2,17 @@ import { useEffect, useRef, useState } from 'react'
 
 type AgentEvent = { agent?: string; type: string; content?: unknown; error?: string }
 
-export function useWarRoom(sessionId: string | undefined) {
+export function useWarRoom(warRoomId: string | undefined) {
   const [events, setEvents] = useState<AgentEvent[]>([])
-  const [agentStatus, setAgentStatus] = useState<Record<string, 'pending' | 'done'>>({})
+  const [agentStatus, setAgentStatus] = useState<Record<string, 'pending' | 'done' | 'error'>>({})
   const wsRef = useRef<WebSocket | null>(null)
 
   useEffect(() => {
-    if (!sessionId) return
+    if (!warRoomId) return
     setEvents([])
     setAgentStatus({})
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    const ws = new WebSocket(`${protocol}://${window.location.host}/ws/war-room/${sessionId}`)
+    const ws = new WebSocket(`${protocol}://${window.location.host}/ws/war-room/${warRoomId}`)
     wsRef.current = ws
 
     ws.onmessage = (event) => {
@@ -28,7 +28,7 @@ export function useWarRoom(sessionId: string | undefined) {
     }
 
     return () => ws.close()
-  }, [sessionId])
+  }, [warRoomId])
 
   return { events, agentStatus, wsRef }
 }

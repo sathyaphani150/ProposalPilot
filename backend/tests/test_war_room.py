@@ -39,13 +39,23 @@ def test_supervisor_requests_loop_when_conflicts_exist() -> None:
 
 
 @pytest.mark.asyncio
-async def test_war_room_graph_runs_end_to_end() -> None:
+async def test_war_room_graph_runs_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeProvider:
+        async def structured_output(self, **_: object) -> None:
+            return None
+
+    fake_provider = _FakeProvider()
+    monkeypatch.setattr("app.war_room.agents.architect_agent.get_war_room_llm_provider", lambda: fake_provider)
+    monkeypatch.setattr("app.war_room.agents.cfo_agent.get_war_room_llm_provider", lambda: fake_provider)
+    monkeypatch.setattr("app.war_room.agents.competitor_agent.get_war_room_llm_provider", lambda: fake_provider)
+    monkeypatch.setattr("app.war_room.agents.proposal_agent.get_war_room_llm_provider", lambda: fake_provider)
+
     result = await run_war_room_graph(
         {
             "session_id": "session-1",
             "session_title": "Modernize Proposal Workflow",
             "client_name": "Acme",
-            "call_notes": "Need faster proposal turnaround.",
+            "call_notes": "Need faster proposal turnaround. Use an offshore-heavy delivery model.",
             "rfp_analysis": {
                 "business_problem": "The client needs a faster proposal workflow.",
                 "estimated_complexity": "medium",
@@ -68,6 +78,16 @@ async def test_war_room_graph_runs_end_to_end() -> None:
     )
 
     assert result["architect_output"]["architecture_summary"]
+    assert result["architect_output"]["assumptions"]
+    assert "offshore" in result["architect_output"]["architecture_summary"].lower() or any(
+        "offshore" in item.lower() for item in result["architect_output"]["recommended_stack"]
+    )
     assert result["cfo_output"]["cost_estimate"]["currency"] == "USD"
+    assert result["cfo_output"]["effort_breakdown"]
+    assert result["cfo_output"]["rate_card"]
+    assert any("offshore" in risk.lower() for risk in result["cfo_output"]["financial_risks"])
+    assert len(result["competitor_output"]["differentiators"]) <= 5
+    assert len(result["competitor_output"]["win_themes"]) <= 4
     assert result["proposal_output"]["executive_summary"]
+    assert len(result["proposal_output"]["compliance_matrix"]) == 1
     assert "status" in result["final_recommendations"]

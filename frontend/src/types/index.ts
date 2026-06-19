@@ -194,6 +194,7 @@ export interface WarRoomSession {
   matched_projects: SimilarProject[]
   review_loops?: number
   final_recommendations?: Record<string, unknown>
+  error_message?: string | null
   discussion_log?: Array<{
     agent: string
     target_agent: string
