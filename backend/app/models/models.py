@@ -52,8 +52,8 @@ class UUIDPrimaryKeyMixin:
 class RFPSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """
     Top-level record for each RFP engagement.
-    Status flows: uploaded → analyzing → analyzed → prep_generating →
-                  prep_ready → war_room_running → war_room_done → proposal_ready
+    Status flows: uploaded → analyzing → analyzed → war_room_running →
+                  war_room_done → proposal_ready
     """
 
     __tablename__ = "rfp_sessions"
@@ -265,7 +265,7 @@ class WarRoomOutput(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 # ── Proposal ──────────────────────────────────────────────────────────────
 class Proposal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """
-    Generated proposal document — either a Prep Pack or Final Proposal.
+    Generated final proposal document.
     Content is stored as structured JSON sections.
     """
 
@@ -281,7 +281,7 @@ class Proposal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     proposal_type: Mapped[str] = mapped_column(
         String(50), nullable=False, index=True
-    )  # prep_pack | final_proposal
+    )  # final_proposal
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     content: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     docx_path: Mapped[str | None] = mapped_column(Text, nullable=True)

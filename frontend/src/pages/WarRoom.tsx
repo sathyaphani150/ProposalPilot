@@ -5,6 +5,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import {
   BriefcaseBusiness,
+  FileText,
   Lightbulb,
   RefreshCw,
 } from 'lucide-react'
@@ -277,6 +278,12 @@ export function WarRoom() {
           <button className="btn btn-secondary" onClick={() => navigate(`/rfp/${sessionId}/analysis`)}>
             Back to RFP Analysis
           </button>
+          {warRoom?.status === 'complete' ? (
+            <button className="btn btn-primary" onClick={() => navigate(`/rfp/${sessionId}/proposal`)}>
+              <FileText size={16} />
+              Build Proposal
+            </button>
+          ) : null}
           <button className="btn btn-primary" onClick={() => startWarRoom()} disabled={busy}>
             {busy ? <div className="spinner" style={{ width: 14, height: 14 }} /> : <RefreshCw size={16} />}
             {warRoom ? 'Regenerate War Room' : 'Run War Room'}

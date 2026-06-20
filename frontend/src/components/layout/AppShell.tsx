@@ -105,25 +105,28 @@ function Topbar() {
         <div>
           <h2 className="topbar-title">{getTitle()}</h2>
         </div>
-        {isSessionRoute && <SessionPipeline status={session?.status} />}
+        {isSessionRoute && <SessionPipeline status={session?.status} path={location.pathname} />}
       </div>
     </header>
   )
 }
 
-function SessionPipeline({ status }: { status?: RFPStatus }) {
+function SessionPipeline({ status, path }: { status?: RFPStatus; path: string }) {
   const stages = [
     { label: 'Uploaded', statuses: ['uploaded', 'analyzing'] },
-    { label: 'Analyzed', statuses: ['analyzed', 'prep_generating', 'prep_ready'] },
+    { label: 'RFP Analysis', statuses: ['analyzed'] },
     { label: 'War Room', statuses: ['war_room_running', 'war_room_done'] },
     { label: 'Proposal', statuses: ['proposal_ready'] },
   ]
-  const activeIndex = Math.max(0, stages.findIndex((stage) => stage.statuses.includes(status || 'uploaded')))
+  const routeIndex = path.includes('/proposal') ? 3 : path.includes('/war-room') ? 2 : path.includes('/analysis') ? 1 : 0
+  const statusIndex = Math.max(0, stages.findIndex((stage) => stage.statuses.includes(status || 'uploaded')))
+  const activeIndex = routeIndex
+  const completedThrough = Math.max(statusIndex - 1, routeIndex - 1)
   return (
     <div className="pipeline">
       {stages.map((stage, index) => (
         <span key={stage.label} className="flex items-center">
-          <span className={`pipeline-step ${index < activeIndex ? 'done' : index === activeIndex ? 'active' : ''}`}>
+          <span className={`pipeline-step ${index === activeIndex ? 'active' : index <= completedThrough ? 'done' : ''}`}>
             <span className="status-dot" />
             {stage.label}
           </span>

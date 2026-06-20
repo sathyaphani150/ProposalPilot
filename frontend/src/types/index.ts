@@ -9,8 +9,6 @@ export type RFPStatus =
   | 'analyzing'
   | 'analyzed'
   | 'analysis_failed'
-  | 'prep_generating'
-  | 'prep_ready'
   | 'war_room_running'
   | 'war_room_done'
   | 'proposal_ready'
@@ -214,29 +212,7 @@ export interface WarRoomAgentOutput {
 }
 
 // ── Proposal Types ────────────────────────────────────────────────────────
-export type ProposalType = 'prep_pack' | 'final_proposal'
-
-export interface PrepPackContent {
-  rfp_summary: string
-  client_situation_assessment?: string
-  value_propositions?: string[]
-  assumptions_to_validate?: string[]
-  competitive_considerations?: string[]
-  similar_projects: SimilarProject[]
-  past_expertise_story: string
-  prospect_call_narrative: string
-  discovery_questions: DiscoveryQuestions
-  talking_points: string[]
-  risks_and_assumptions: string[]
-  scope_guardrails: string[]
-  proposed_architecture_direction: string
-  solution_narrative?: string
-  quality_note?: {
-    generation_mode: string
-    retrieval_warning?: string | null
-    source: string
-  }
-}
+export type ProposalType = 'final_proposal'
 
 export interface SimilarProject {
   doc_id?: string
@@ -307,7 +283,7 @@ export interface Proposal {
   war_room_session_id: string | null
   proposal_type: ProposalType
   version: number
-  content: PrepPackContent | FinalProposalContent
+  content: FinalProposalContent
   docx_path: string | null
   pdf_path: string | null
   is_published: boolean

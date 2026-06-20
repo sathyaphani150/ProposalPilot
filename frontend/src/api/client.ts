@@ -4,7 +4,8 @@
  */
 import axios, { AxiosError, type AxiosInstance } from 'axios'
 
-const BASE_URL = '/api/v1'
+const DEV_BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8124'
+const BASE_URL = import.meta.env.DEV ? `${DEV_BACKEND_URL}/api/v1` : '/api/v1'
 
 export const apiClient: AxiosInstance = axios.create({
   baseURL: BASE_URL,

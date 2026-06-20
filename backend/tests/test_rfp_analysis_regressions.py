@@ -4,10 +4,7 @@ from pathlib import Path
 
 from app.services.rfp_engine import _deterministic_extract, _finalize_analysis_payload
 from app.services.rfp_service import _analysis_needs_recovery
-from app.services.leadership_output import (
-    sanitize_analysis_payload_for_leadership,
-    sanitize_prep_pack_content_for_leadership,
-)
+from app.services.leadership_output import sanitize_analysis_payload_for_leadership
 
 
 GENERIC_RFP_SAMPLE = """
@@ -276,46 +273,6 @@ def test_etrm_call_prep_avoids_false_ai_and_weak_evidence() -> None:
     assert architecture["technical_view"]
     assert architecture["security_operations"]
     assert not any(component.endswith(" of") or component.endswith(" in") for component in architecture["components"])
-
-
-def test_prep_pack_response_hides_raw_kb_snippets_and_admin_noise() -> None:
-    content = sanitize_prep_pack_content_for_leadership(
-        {
-            "rfp_summary": "Copy of audited balance sheet must be submitted.",
-            "client_situation_assessment": "Client wants workflow modernization.",
-            "prospect_call_narrative": "Validate outcomes before pricing.",
-            "value_propositions": ["Reduce delivery risk by validating dependencies.", "EMD must be submitted."],
-            "discovery_questions": {"business": ["What outcome should prove success?", "When is bid submission?"]},
-            "talking_points": ["Outcome-first discovery"],
-            "assumptions_to_validate": ["Buyer will provide timely API access."],
-            "risks_and_assumptions": ["Bid opening date may change.", "Integration access may delay delivery."],
-            "scope_guardrails": ["Do not price before API and data readiness are known."],
-            "solution_narrative": "Use modular workstreams.",
-            "proposed_architecture_direction": "Separate workflow, data, integrations, security, and operations.",
-            "competitive_considerations": ["Show delivery-risk control."],
-            "similar_projects": [
-                {
-                    "doc_id": "1",
-                    "title": "Workflow modernization",
-                    "match_type": "partial",
-                    "confidence_score": 0.7,
-                    "relevance_summary": "Relevant case study for workflow and API integration.",
-                    "reusable_assets": ["API patterns"],
-                    "evidence": {"snippet": "Long raw internal project chunk"},
-                }
-            ],
-            "quality_note": {"generation_mode": "test", "source": "raw snippets"},
-        }
-    )
-    response_text = str(content).lower()
-
-    assert content["rfp_summary"] == ""
-    assert "evidence" not in content["similar_projects"][0]
-    assert "raw internal project chunk" not in response_text
-    assert "audited balance sheet" not in response_text
-    assert "emd" not in response_text
-    assert "bid opening" not in response_text
-    assert content["quality_note"]["leadership_safe"] is True
 
 
 def test_rfp_analysis_ui_uses_executive_tab_set_only() -> None:

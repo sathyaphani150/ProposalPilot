@@ -1,5 +1,5 @@
 """
-Leadership-facing response shaping for RFP analysis and prep-pack endpoints.
+Leadership-facing response shaping for RFP analysis endpoints.
 
 The database may retain raw extraction/debug evidence, but CEO/VP/Director views
 should receive only decision-grade, source-grounded, low-noise content.
@@ -295,77 +295,3 @@ def sanitize_analysis_payload_for_leadership(analysis: dict[str, Any]) -> dict[s
         ],
     }
     return payload
-
-
-def sanitize_prep_pack_content_for_leadership(content: dict[str, Any]) -> dict[str, Any]:
-    """Return a leadership-safe prep-pack content object without raw evidence dumps."""
-    source = copy.deepcopy(content or {})
-    sanitized = {
-        "rfp_summary": _clean_public_text(source.get("rfp_summary"), max_chars=900),
-        "client_situation_assessment": _clean_public_text(source.get("client_situation_assessment"), max_chars=900),
-        "prospect_call_narrative": _clean_public_text(source.get("prospect_call_narrative"), max_chars=1000),
-        "value_propositions": _clean_items(source.get("value_propositions"), limit=6),
-        "discovery_questions": sanitize_question_groups(source.get("discovery_questions")),
-        "talking_points": _clean_items(source.get("talking_points"), limit=6),
-        "assumptions_to_validate": _clean_items(source.get("assumptions_to_validate"), limit=8),
-        "risks_and_assumptions": _clean_items(source.get("risks_and_assumptions"), limit=8),
-        "scope_guardrails": _clean_items(source.get("scope_guardrails"), limit=6),
-        "solution_narrative": _clean_public_text(source.get("solution_narrative"), max_chars=1000),
-        "proposed_architecture_direction": _clean_public_text(source.get("proposed_architecture_direction"), max_chars=1000),
-        "competitive_considerations": _clean_items(source.get("competitive_considerations"), limit=5),
-        "similar_projects": sanitize_similar_projects(source.get("similar_projects")),
-        "past_expertise_story": _clean_public_text(source.get("past_expertise_story"), max_chars=700),
-        "quality_note": sanitize_quality_note(source.get("quality_note")),
-    }
-    return sanitized
-
-
-def sanitize_question_groups(value: Any) -> dict[str, list[str]]:
-    if not isinstance(value, dict):
-        return {}
-    priority = ("business", "success_metrics", "operations", "data", "integration", "governance", "commercial")
-    groups: dict[str, list[str]] = {}
-    ordered_keys = [key for key in priority if key in value] + [key for key in value if key not in priority]
-    for key in ordered_keys:
-        questions = _clean_items(value.get(key), limit=6)
-        if questions:
-            groups[str(key)] = questions
-        if len(groups) >= 7:
-            break
-    return groups
-
-
-def sanitize_similar_projects(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    projects: list[dict[str, Any]] = []
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-        summary = _clean_text(item.get("relevance_summary"), max_chars=500)
-        title = _clean_text(item.get("title"), max_chars=140)
-        if not title or not summary or _is_noise(summary):
-            continue
-        projects.append(
-            {
-                "doc_id": item.get("doc_id"),
-                "title": title,
-                "match_type": item.get("match_type") or "partial",
-                "confidence_score": item.get("confidence_score") or 0,
-                "relevance_summary": summary,
-                "reusable_assets": _clean_items(item.get("reusable_assets"), limit=5, max_chars=80),
-            }
-        )
-        if len(projects) >= 4:
-            break
-    return projects
-
-
-def sanitize_quality_note(value: Any) -> dict[str, Any]:
-    note = value if isinstance(value, dict) else {}
-    return {
-        "generation_mode": _clean_text(note.get("generation_mode"), max_chars=80) or "leadership_safe",
-        "retrieval_warning": _clean_text(note.get("retrieval_warning"), max_chars=260) or None,
-        "source": _clean_text(note.get("source"), max_chars=160) or "RFP analysis plus internal KB search summaries",
-        "leadership_safe": True,
-    }

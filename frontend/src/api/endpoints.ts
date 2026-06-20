@@ -2,7 +2,8 @@
  * ProposalPilot AI — RFP API Functions
  */
 import { apiClient } from './client'
-import type { KnowledgeItem, KnowledgeSearchResult, RFPSession, RFPAnalysis } from '@/types'
+import axios from 'axios'
+import type { KnowledgeItem, KnowledgeSearchResult, Proposal, RFPSession, RFPAnalysis } from '@/types'
 
 export const rfpApi = {
   upload: async (
@@ -124,9 +125,21 @@ export const warRoomApi = {
 }
 
 export const proposalApi = {
-  generate: async (sessionId: string, type: 'prep_pack' | 'final_proposal') => {
-    const { data } = await apiClient.post(`/proposals/${sessionId}/generate`, { type })
-    return data
+  generate: async (sessionId: string): Promise<Proposal> => {
+    const { data } = await apiClient.post<{ proposal: Proposal }>(`/proposals/${sessionId}/generate`, {
+      type: 'final_proposal',
+    })
+    return data.proposal
+  },
+
+  getLatestFinal: async (sessionId: string): Promise<Proposal | null> => {
+    try {
+      const { data } = await apiClient.get<{ proposal: Proposal | null }>(`/proposals/session/${sessionId}/final`)
+      return data.proposal
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) return null
+      throw error
+    }
   },
 
   getById: async (proposalId: string) => {

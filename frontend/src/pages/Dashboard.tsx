@@ -13,8 +13,6 @@ const STATUS_CONFIG: Record<RFPStatus, { label: string; className: string }> = {
   analyzing: { label: 'Analyzing...', className: 'badge badge-analyzing' },
   analyzed: { label: 'Analyzed', className: 'badge badge-analyzed' },
   analysis_failed: { label: 'Analysis Failed', className: 'badge badge-danger' },
-  prep_generating: { label: 'Generating Prep', className: 'badge badge-analyzing' },
-  prep_ready: { label: 'Prep Ready', className: 'badge badge-prep-ready' },
   war_room_running: { label: 'War Room Active', className: 'badge badge-war-room' },
   war_room_done: { label: 'War Room Done', className: 'badge badge-prep-ready' },
   proposal_ready: { label: 'Proposal Ready', className: 'badge badge-done' },
@@ -52,8 +50,8 @@ export function Dashboard() {
   const statusCounts = data?.status_counts ?? derivedStatusCounts
   const pipelineStages = [
     { label: 'Uploaded', count: statusCounts.uploaded ?? 0 },
-    { label: 'Analyzing', count: (statusCounts.analyzing ?? 0) + (statusCounts.prep_generating ?? 0) },
-    { label: 'Analyzed', count: (statusCounts.analyzed ?? 0) + (statusCounts.prep_ready ?? 0) },
+    { label: 'Analyzing', count: statusCounts.analyzing ?? 0 },
+    { label: 'Analyzed', count: statusCounts.analyzed ?? 0 },
     { label: 'War Room', count: (statusCounts.war_room_running ?? 0) + (statusCounts.war_room_done ?? 0) },
     { label: 'Proposal Ready', count: statusCounts.proposal_ready ?? 0 },
   ]
@@ -63,7 +61,6 @@ export function Dashboard() {
       case 'uploaded':
         return { label: 'Analyze RFP', path: `/rfp/${session.id}/analysis` }
       case 'analyzed':
-      case 'prep_ready':
         return { label: 'View Analysis', path: `/rfp/${session.id}/analysis` }
       case 'war_room_done':
         return { label: 'View War Room', path: `/rfp/${session.id}/war-room` }
