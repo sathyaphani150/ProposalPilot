@@ -163,11 +163,52 @@ function OutputValue({ label, value }: { label: string; value: string }) {
   return <p className="readable-text">{value}</p>
 }
 
+type OutputSection = ReturnType<typeof parseOutputSections>[number]
+
+function findSection(sections: OutputSection[], labels: string[]) {
+  return sections.find((section) => labels.includes(section.label))
+}
+
+function getSummarySection(agent: AgentName, sections: OutputSection[]) {
+  const labels: Record<AgentName, string[]> = {
+    architect: ['Architecture Summary', 'Architecture Pattern', 'Reasoning'],
+    cfo: ['Pricing Model', 'Margin Assessment', 'Cost Estimate', 'Reasoning'],
+    competitor: ['Positioning Strategy', 'Value Proposition', 'Executive Messaging', 'Reasoning'],
+    proposal: ['Executive Summary', 'Proposed Solution Narrative', 'Reasoning'],
+  }
+  return findSection(sections, labels[agent]) || sections.find((section) => section.label !== 'Confidence')
+}
+
+function getCompactDetailSections(agent: AgentName, sections: OutputSection[]) {
+  const labels: Record<AgentName, string[]> = {
+    architect: ['Recommended Stack', 'Technical Risks'],
+    cfo: ['Cost Estimate', 'Financial Risks', 'Estimated Duration (weeks)'],
+    competitor: ['Differentiators', 'Win Themes', 'Competitive Risks'],
+    proposal: ['Delivery Approach', 'Risks', 'Assumptions'],
+  }
+  return labels[agent]
+    .map((label) => findSection(sections, [label]))
+    .filter((section): section is OutputSection => Boolean(section))
+    .slice(0, 2)
+}
+
+function getWaitingCopy(agent: AgentName, status: AgentStatus) {
+  if (status === 'done') return 'No output generated.'
+  const copy: Record<AgentName, string> = {
+    architect: 'Reading scope, requirements, integrations, and implementation constraints.',
+    cfo: 'Waiting on architecture and scope signals before shaping cost and duration.',
+    competitor: 'Drafting positioning strategy from architecture and pricing inputs.',
+    proposal: 'Waiting on agent synthesis before drafting the final proposal narrative.',
+  }
+  return copy[agent]
+}
+
 export function WarRoom() {
   const { sessionId } = useParams<{ sessionId: string }>()
   const navigate = useNavigate()
   const [callNotes, setCallNotes] = useState('')
   const [overrideText, setOverrideText] = useState('')
+  const [expandedAgent, setExpandedAgent] = useState<AgentName | null>(null)
 
   const { data: session } = useQuery({
     queryKey: ['rfpSession', sessionId],
@@ -289,8 +330,8 @@ export function WarRoom() {
       ) : (
         <>
           <div className="panel mb-4">
-            <div className="flex justify-between items-center flex-wrap gap-4">
-              <div>
+            <div className="war-room-status-row">
+              <div className="war-room-status-meta">
                 <span
                   className={`badge ${
                     warRoom.status === 'failed'
@@ -303,7 +344,7 @@ export function WarRoom() {
                 >
                   {warRoom.status}
                 </span>
-                <span className="text-secondary mt-3">
+                <span className="text-secondary">
                   Matched projects: <span className="mono-data">{warRoom.matched_projects?.length || 0}</span>
                 </span>
               </div>
@@ -345,8 +386,19 @@ export function WarRoom() {
               const status = getAgentStatus(agent.key, agentStatus[agent.key], warRoom)
               const agentOutput = warRoom.agent_outputs?.[agent.key] as WarRoomAgentOutput | undefined
               const sections = parseOutputSections(renderAgentOutput(agent.key, agentOutput))
+              const isExpanded = expandedAgent === agent.key
+              const confidence = confidencePercent(agentOutput?.confidence)
+              const summarySection = getSummarySection(agent.key, sections)
+              const detailSections = getCompactDetailSections(agent.key, sections)
               return (
-              <div key={agent.key} className="panel agent-seat" style={{ '--agent-color': agent.color } as CSSProperties}>
+              <button
+                key={agent.key}
+                type="button"
+                className={`panel agent-seat agent-seat--clickable ${isExpanded ? 'agent-seat--expanded' : ''}`}
+                style={{ '--agent-color': agent.color } as CSSProperties}
+                onClick={() => setExpandedAgent((current) => current === agent.key ? null : agent.key)}
+                aria-expanded={isExpanded}
+              >
                 <div className="agent-seat__header">
                   <h3 className="agent-name">
                     {agent.icon}
@@ -364,15 +416,35 @@ export function WarRoom() {
                     ) : null}
                   </div>
                 </div>
-                <div className="agent-output">
-                  {sections.map((section) => (
-                    <div className="agent-section" key={`${agent.key}-${section.label}`}>
+                <div className="agent-preview">
+                  <p className="agent-preview__summary">
+                    {summarySection?.value || getWaitingCopy(agent.key, status)}
+                  </p>
+                  <div className="agent-preview__confidence">
+                    <span className="mono-data">confidence</span>
+                    <div className="confidence-track">
+                      <div className="confidence-fill" style={{ width: `${confidence ?? 14}%` }} />
+                    </div>
+                    <span className="mono-data">{confidence === null ? '-' : `${confidence}%`}</span>
+                  </div>
+                  {detailSections.map((section) => (
+                    <div className="agent-preview__block" key={`${agent.key}-preview-${section.label}`}>
                       <h4>{section.label}</h4>
                       <OutputValue label={section.label} value={section.value} />
                     </div>
                   ))}
                 </div>
-              </div>
+                {isExpanded ? (
+                  <div className="agent-output agent-output--expanded">
+                    {sections.map((section) => (
+                      <div className="agent-section" key={`${agent.key}-${section.label}`}>
+                        <h4>{section.label}</h4>
+                        <OutputValue label={section.label} value={section.value} />
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </button>
             )})}
           </div>
         </>
