@@ -148,7 +148,7 @@ function hasUsableIntelligence(value?: RFPIntelligence) {
 
 function SectionCard({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
   return (
-    <div className="insight-card">
+    <div className="panel">
       <h3 className="section-title">
         {icon}
         {title}
@@ -242,7 +242,10 @@ function EvidenceCards({ evidence }: { evidence?: EvidenceItem[] }) {
         <div className="match-card" key={`${item.title}-${index}`}>
           <div className="flex justify-between items-center gap-3" style={{ marginBottom: '0.5rem' }}>
             <h4 style={{ margin: 0 }}>{item.title}</h4>
-            <span className="badge badge-analyzed">{Math.round((item.score || 0) * 100)}%</span>
+            <span className="badge badge-analyzed mono-data">{Math.round((item.score || 0) * 100)}%</span>
+          </div>
+          <div className="relevance-track mb-3">
+            <div className="relevance-fill" style={{ width: `${Math.round((item.score || 0) * 100)}%` }} />
           </div>
           <p className="readable-text">{item.why_relevant}</p>
           <div className="flex gap-2" style={{ marginTop: '0.75rem', flexWrap: 'wrap' }}>
@@ -561,7 +564,7 @@ export function RFPAnalysis() {
       ) : (
         <div className="content-stack">
           {isFallbackAnalysis ? (
-            <div className="insight-card" style={{ borderColor: 'rgba(245, 158, 11, 0.55)', background: 'rgba(245, 158, 11, 0.08)' }}>
+            <div className="panel" style={{ borderColor: 'rgba(255, 180, 84, 0.55)', background: 'rgba(255, 180, 84, 0.08)' }}>
               <h3 className="section-title">
                 <AlertTriangle size={20} color="var(--color-warning)" />
                 Model Analysis Unavailable
@@ -572,10 +575,13 @@ export function RFPAnalysis() {
             </div>
           ) : null}
 
-          <div className="card-elevated">
+          <div className="panel panel--raised">
             <h3 className="section-title">
               <Activity size={20} color="var(--color-primary-light)" />
               Sentiment Analysis
+              {intelligence.sentiment_analysis?.confidence ? (
+                <span className="badge badge-analyzed mono-data">{intelligence.sentiment_analysis.confidence}</span>
+              ) : null}
             </h3>
             <p className="readable-text" style={{ color: 'var(--color-text-primary)' }}>
               {intelligence.sentiment_analysis?.summary || 'No sentiment summary was generated.'}
@@ -583,7 +589,7 @@ export function RFPAnalysis() {
             <SentimentPointCards points={intelligence.sentiment_analysis?.points} />
           </div>
 
-          <div className="insight-card" style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto', padding: '0.65rem' }}>
+          <div className="panel" style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto', padding: '0.65rem' }}>
             {tabs.map((tab) => (
               <button
                 key={tab}

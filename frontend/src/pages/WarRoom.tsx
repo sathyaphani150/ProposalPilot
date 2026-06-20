@@ -1,29 +1,19 @@
 import { useState } from 'react'
-import type { ReactNode } from 'react'
+import type { CSSProperties } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import {
   BriefcaseBusiness,
-  Calculator,
-  FileText,
   Lightbulb,
   RefreshCw,
-  Shield,
-  UserRoundCog,
 } from 'lucide-react'
 
 import { rfpApi, warRoomApi } from '@/api/endpoints'
 import { getErrorMessage } from '@/api/client'
 import { useWarRoom } from '@/hooks/useWarRoom'
-import type { AgentName, WarRoomAgentOutput, WarRoomSession } from '@/types'
-
-const agentConfig: Array<{ key: AgentName; label: string; icon: ReactNode; color: string }> = [
-  { key: 'architect', label: 'Tech Architect', icon: <UserRoundCog size={20} />, color: 'var(--color-primary-light)' },
-  { key: 'cfo', label: 'CFO / Pricing', icon: <Calculator size={20} />, color: 'var(--color-success)' },
-  { key: 'competitor', label: 'Competitor Strategist', icon: <Shield size={20} />, color: 'var(--color-warning)' },
-  { key: 'proposal', label: 'Proposal Writer', icon: <FileText size={20} />, color: 'var(--color-info)' },
-]
+import { agentConfig } from '@/config/agents'
+import type { AgentName, AgentStatus, WarRoomAgentOutput, WarRoomSession } from '@/types'
 
 function stripGeneratedBy(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -123,6 +113,56 @@ function renderAgentOutput(agent: AgentName, output: unknown): string {
   return sections.length > 0 ? sections.join('\n\n') : JSON.stringify(stripGeneratedBy(output), null, 2)
 }
 
+function parseOutputSections(outputText: string) {
+  return outputText.split('\n\n').map((section) => {
+    const [label, ...valueLines] = section.split('\n')
+    return { label, value: valueLines.join('\n').trim() }
+  }).filter((section) => section.label)
+}
+
+function confidencePercent(value: unknown) {
+  if (typeof value !== 'number' || Number.isNaN(value)) return null
+  return Math.round((value <= 1 ? value * 100 : value))
+}
+
+function getAgentStatus(agent: AgentName, liveStatus: AgentStatus | undefined, warRoom: WarRoomSession): AgentStatus {
+  if (liveStatus) return liveStatus
+  if (warRoom.agent_outputs?.[agent]) return 'done'
+  if (warRoom.status === 'running') return 'thinking'
+  if (warRoom.status === 'failed') return 'error'
+  return 'idle'
+}
+
+function statusBadgeClass(status: AgentStatus) {
+  if (status === 'done') return 'badge-done'
+  if (status === 'error') return 'badge-danger'
+  if (status === 'thinking' || status === 'writing') return 'badge-war-room'
+  return 'badge-uploaded'
+}
+
+function OutputValue({ label, value }: { label: string; value: string }) {
+  if (label === 'Confidence') {
+    const percent = confidencePercent(Number(value))
+    return percent === null ? <p className="readable-text">{value}</p> : (
+      <div className="confidence-meter">
+        <div className="confidence-track"><div className="confidence-fill" style={{ width: `${percent}%` }} /></div>
+        <span className="mono-data">{percent}%</span>
+      </div>
+    )
+  }
+
+  const lines = value.split('\n').map((line) => line.replace(/^-\s*/, '').trim()).filter(Boolean)
+  if (lines.length > 1 || value.trim().startsWith('- ')) {
+    return (
+      <div className="chip-list">
+        {lines.map((line, index) => <span className="output-chip" key={`${line}-${index}`}>{line}</span>)}
+      </div>
+    )
+  }
+
+  return <p className="readable-text">{value}</p>
+}
+
 export function WarRoom() {
   const { sessionId } = useParams<{ sessionId: string }>()
   const navigate = useNavigate()
@@ -172,16 +212,23 @@ export function WarRoom() {
   })
 
   const busy = isLoading || isStarting || isOverriding
+  const completedOutputs = agentConfig
+    .map((agent) => warRoom?.agent_outputs?.[agent.key] as WarRoomAgentOutput | undefined)
+    .filter((output): output is WarRoomAgentOutput => Boolean(output))
+  const averageConfidence = completedOutputs.length
+    ? Math.round(completedOutputs.reduce((sum, output) => sum + (confidencePercent(output.confidence) || 0), 0) / completedOutputs.length)
+    : null
+  const hasFallback = completedOutputs.some((output) => output.generated_by === 'deterministic_fallback')
 
   return (
     <div className="fade-in">
-      <div className="flex justify-between items-center" style={{ marginBottom: '2rem', flexWrap: 'wrap', gap: '1rem' }}>
+      <div className="page-header">
         <div>
-          <h1 style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <BriefcaseBusiness size={28} color="var(--color-primary-light)" />
-            Agent War Room
-          </h1>
-          <p style={{ color: 'var(--color-text-secondary)', marginTop: '0.35rem' }}>
+          <div className="page-title">
+            <BriefcaseBusiness size={28} color="var(--color-accent)" />
+            <h1>Agent War Room</h1>
+          </div>
+          <p className="page-subtitle">
             {session?.title || 'RFP Session'} - Architect, CFO, Competitor, and Proposal strategy
           </p>
         </div>
@@ -196,7 +243,7 @@ export function WarRoom() {
         </div>
       </div>
 
-      <div className="card-elevated" style={{ marginBottom: '1.5rem' }}>
+      <div className="panel panel--raised mb-4">
         <div className="grid-2">
           <div>
             <label className="form-label">Call Notes / Clarifications</label>
@@ -218,8 +265,7 @@ export function WarRoom() {
               style={{ minHeight: 130 }}
             />
             <button
-              className="btn btn-secondary"
-              style={{ marginTop: '0.75rem' }}
+              className="btn btn-secondary mt-3"
               onClick={() => applyOverride()}
               disabled={busy || !overrideText.trim()}
             >
@@ -230,10 +276,10 @@ export function WarRoom() {
       </div>
 
       {!warRoom ? (
-        <div className="card text-center" style={{ padding: '4rem' }}>
-          <Lightbulb size={48} color="var(--color-text-muted)" style={{ margin: '0 auto 1rem' }} />
-          <h3 style={{ marginBottom: '0.5rem' }}>No War Room Run Yet</h3>
-          <p style={{ color: 'var(--color-text-secondary)', marginBottom: '1.5rem' }}>
+        <div className="panel panel--raised empty-state">
+          <Lightbulb size={48} color="var(--color-accent)" />
+          <h3>No War Room Run Yet</h3>
+          <p className="page-subtitle">
             Run the War Room after reviewing the RFP analysis to get multi-role proposal strategy.
           </p>
           <button className="btn btn-primary" onClick={() => startWarRoom()} disabled={busy}>
@@ -242,8 +288,8 @@ export function WarRoom() {
         </div>
       ) : (
         <>
-          <div className="card" style={{ marginBottom: '1.5rem' }}>
-            <div className="flex justify-between items-center" style={{ flexWrap: 'wrap', gap: '1rem' }}>
+          <div className="panel mb-4">
+            <div className="flex justify-between items-center flex-wrap gap-4">
               <div>
                 <span
                   className={`badge ${
@@ -257,72 +303,77 @@ export function WarRoom() {
                 >
                   {warRoom.status}
                 </span>
-                <span style={{ marginLeft: '0.75rem', color: 'var(--color-text-secondary)' }}>
-                  Matched projects: {warRoom.matched_projects?.length || 0}
+                <span className="text-secondary mt-3">
+                  Matched projects: <span className="mono-data">{warRoom.matched_projects?.length || 0}</span>
                 </span>
               </div>
-              <span style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
+              <span className="text-muted text-sm mono-data">
                 Generated {new Date(warRoom.updated_at || warRoom.created_at).toLocaleString()}
               </span>
             </div>
           </div>
 
-          {warRoom.error_message ? (
-            <div className="card" style={{ marginBottom: '1.5rem', border: '1px solid rgba(239, 68, 68, 0.35)' }}>
-              <h3 style={{ marginBottom: '0.5rem', color: '#f87171' }}>War Room Failed</h3>
-              <p style={{ margin: 0, color: 'var(--color-text-secondary)' }}>{warRoom.error_message}</p>
+          {warRoom.status === 'complete' ? (
+            <div className="panel panel--raised mb-4">
+              <div className="verdict-grid">
+                <div>
+                  <h3>Verdict Summary</h3>
+                  <p className="text-secondary text-sm">Four-role synthesis complete</p>
+                </div>
+                <div className="stat-tile">
+                  <span className="text-xs text-muted">Overall Confidence</span>
+                  <div className="mono-data pipeline-count">{averageConfidence ?? 0}%</div>
+                </div>
+                <div className="stat-tile">
+                  <span className="text-xs text-muted">Matched Projects</span>
+                  <div className="mono-data pipeline-count">{warRoom.matched_projects?.length || 0}</div>
+                </div>
+                {hasFallback ? <span className="badge badge-analyzing">One or more seats used fallback output</span> : <span className="badge badge-done">All seats AI-generated</span>}
+              </div>
             </div>
           ) : null}
 
-          <div style={{ display: 'grid', gap: '1rem' }}>
-            {agentConfig.map((agent) => (
-              <div key={agent.key} className="card">
-                {(() => {
-                  const agentDone = agentStatus[agent.key] === 'done' || Boolean(warRoom.agent_outputs?.[agent.key])
-                  const agentBusy = warRoom.status === 'running' && !agentDone
-                  const agentOutput = warRoom.agent_outputs?.[agent.key] as WarRoomAgentOutput | undefined
-                  const generatedBy = agentOutput?.generated_by
-                  return (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem' }}>
-                      <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0, color: agent.color }}>
-                        {agent.icon}
-                        {agent.label}
-                      </h3>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                        <span className={`badge ${agentDone ? 'badge-done' : agentBusy ? 'badge-war-room' : ''}`}>
-                          {agentDone ? 'done' : agentBusy ? 'thinking' : 'idle'}
-                        </span>
-                        {generatedBy === 'llm' ? (
-                          <span className="badge badge-done">AI-generated</span>
-                        ) : generatedBy === 'deterministic_fallback' ? (
-                          <span
-                            className="badge"
-                            style={{
-                              background: 'rgba(245, 158, 11, 0.16)',
-                              color: 'var(--color-warning)',
-                              border: '1px solid rgba(245, 158, 11, 0.35)',
-                            }}
-                          >
-                            Fallback (LLM unavailable)
-                          </span>
-                        ) : null}
-                      </div>
+          {warRoom.error_message ? (
+            <div className="panel mb-4" style={{ borderColor: 'rgba(255, 107, 107, 0.35)' }}>
+              <h3 className="mb-2" style={{ color: 'var(--color-error)' }}>War Room Failed</h3>
+              <p className="readable-text">{warRoom.error_message}</p>
+            </div>
+          ) : null}
+
+          <div className="agent-grid">
+            {agentConfig.map((agent) => {
+              const status = getAgentStatus(agent.key, agentStatus[agent.key], warRoom)
+              const agentOutput = warRoom.agent_outputs?.[agent.key] as WarRoomAgentOutput | undefined
+              const sections = parseOutputSections(renderAgentOutput(agent.key, agentOutput))
+              return (
+              <div key={agent.key} className="panel agent-seat" style={{ '--agent-color': agent.color } as CSSProperties}>
+                <div className="agent-seat__header">
+                  <h3 className="agent-name">
+                    {agent.icon}
+                    {agent.label}
+                  </h3>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`badge status-chip ${statusBadgeClass(status)}`}>
+                      <span className="status-dot" />
+                      {status}
+                    </span>
+                    {(status === 'thinking' || status === 'writing') ? (
+                      <span className="thinking-indicator" aria-label={`${agent.label} ${status}`}>
+                        <span /><span /><span />
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="agent-output">
+                  {sections.map((section) => (
+                    <div className="agent-section" key={`${agent.key}-${section.label}`}>
+                      <h4>{section.label}</h4>
+                      <OutputValue label={section.label} value={section.value} />
                     </div>
-                  )
-                })()}
-                <pre
-                  style={{
-                    whiteSpace: 'pre-wrap',
-                    color: 'var(--color-text-secondary)',
-                    fontFamily: 'var(--font-sans)',
-                    lineHeight: 1.6,
-                    margin: 0,
-                  }}
-                >
-                  {renderAgentOutput(agent.key, warRoom.agent_outputs?.[agent.key])}
-                </pre>
+                  ))}
+                </div>
               </div>
-            ))}
+            )})}
           </div>
         </>
       )}
