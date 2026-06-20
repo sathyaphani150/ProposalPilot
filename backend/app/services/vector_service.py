@@ -283,7 +283,8 @@ async def check_qdrant_health() -> bool:
     try:
         await client.get_collections()
         return True
-    except Exception:
+    except Exception as exc:
+        logger.warning(f"Qdrant health check failed: {exc}")
         return False
     finally:
         await client.close()

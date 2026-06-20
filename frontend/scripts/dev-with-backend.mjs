@@ -7,7 +7,7 @@ const scriptDir = dirname(fileURLToPath(import.meta.url))
 const frontendDir = resolve(scriptDir, '..')
 const repoRoot = resolve(frontendDir, '..')
 const backendDir = join(repoRoot, 'backend')
-const backendPort = process.env.VITE_BACKEND_PORT || '8123'
+const backendPort = process.env.VITE_BACKEND_PORT || '8124'
 const backendHost = process.env.VITE_BACKEND_HOST || '127.0.0.1'
 const backendUrl =
   process.env.VITE_BACKEND_URL || `http://${backendHost}:${backendPort}`
@@ -23,10 +23,12 @@ function resolvePythonCommand() {
       ? [
           join(repoRoot, '.venv', 'Scripts', 'python.exe'),
           join(backendDir, 'venv', 'Scripts', 'python.exe'),
+          join(backendDir, 'ppvenv', 'Scripts', 'python.exe'),
         ]
       : [
           join(repoRoot, '.venv', 'bin', 'python'),
           join(backendDir, 'venv', 'bin', 'python'),
+          join(backendDir, 'ppvenv', 'bin', 'python'),
         ]
 
   const existing = candidates.find((candidate) => existsSync(candidate))

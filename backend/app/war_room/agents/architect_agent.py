@@ -4,6 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.war_room.confidence import calculate_agent_confidence
 from app.war_room.llm_provider import get_war_room_llm_provider
 
 SYSTEM_PROMPT = """
@@ -80,7 +81,7 @@ class ArchitectOutput(BaseModel):
     technical_risks: list[str] = Field(default_factory=list)
     validation_questions: list[str] = Field(default_factory=list)
     reasoning: str
-    confidence: float = Field(ge=0.0, le=1.0)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 def _override_text(state: dict[str, Any]) -> str:
@@ -223,7 +224,6 @@ def _fallback(state: dict[str, Any]) -> ArchitectOutput:
             f"Architecture decisions are grounded in {len(context)} context items, {len(domain_tags)} domain tags, {len(non_functional)} non-functional requirements, and complexity {analysis.get('estimated_complexity') or 'medium'}."
             + (f" Override changed the scope toward: {override_text}." if override_text else "")
         ),
-        confidence=0.78,
     )
 
 
@@ -247,5 +247,12 @@ Return a JSON object matching the schema.
     )
     output = structured or _fallback(state)
     payload = output.model_dump()
-    payload["generated_by"] = "llm" if structured else "deterministic_fallback"
+    generated_by = "llm" if structured else "deterministic_fallback"
+    payload["generated_by"] = generated_by
+    payload["confidence"] = calculate_agent_confidence(
+        agent="architect",
+        state=state,
+        payload=payload,
+        generated_by=generated_by,
+    )
     return {"architect_output": payload}

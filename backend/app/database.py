@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+from loguru import logger
 
 from app.config import get_settings
 
@@ -64,7 +65,8 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         try:
             yield session
             await session.commit()
-        except Exception:
+        except Exception as exc:
+            logger.debug(f"Database session rollback due to exception: {exc}")
             await session.rollback()
             raise
         finally:
@@ -77,5 +79,6 @@ async def check_db_connection() -> bool:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         return True
-    except Exception:
+    except Exception as exc:
+        logger.warning(f"Database health check failed: {exc}")
         return False

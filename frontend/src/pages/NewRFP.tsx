@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useDropzone, type FileRejection } from 'react-dropzone'
 import toast from 'react-hot-toast'
 import { Upload, X, CheckCircle, AlertCircle } from 'lucide-react'
@@ -11,6 +11,7 @@ const MAX_SIZE = 20 * 1024 * 1024 // 20MB
 
 export function NewRFP() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [file, setFile] = useState<File | null>(null)
   const [clientName, setClientName] = useState('')
   const [title, setTitle] = useState('')
@@ -18,7 +19,8 @@ export function NewRFP() {
 
   const { mutate: uploadRFP, isPending } = useMutation({
     mutationFn: () => rfpApi.upload(file!, { clientName, title }),
-    onSuccess: (session) => {
+    onSuccess: async (session) => {
+      await queryClient.invalidateQueries({ queryKey: ['rfp-sessions'] })
       toast.success('RFP uploaded successfully!')
       navigate(`/rfp/${session.id}/analysis`)
     },
@@ -64,10 +66,10 @@ export function NewRFP() {
   const canSubmit = !!file && !isPending
 
   return (
-    <div style={{ maxWidth: 680, margin: '0 auto' }}>
-      <div style={{ marginBottom: '2rem' }}>
-        <h1 style={{ marginBottom: '0.5rem' }}>Upload RFP Document</h1>
-        <p style={{ color: 'var(--color-text-muted)' }}>
+    <div className="content-stack" style={{ maxWidth: 680, margin: '0 auto' }}>
+      <div>
+        <h1 className="mb-2">Upload RFP Document</h1>
+        <p className="text-muted">
           Upload a client RFP, requirements brief, or SOW. Our AI will extract key insights
           and prepare your prospect strategy.
         </p>
@@ -116,7 +118,7 @@ export function NewRFP() {
           </div>
         ) : (
           <>
-            <div className="dropzone-icon">📄</div>
+            <Upload size={42} className="dropzone-icon" />
             <h3 style={{ marginBottom: '0.5rem' }}>
               {isDragActive ? 'Drop your RFP here' : 'Drag & drop your RFP'}
             </h3>
@@ -136,25 +138,14 @@ export function NewRFP() {
       </div>
 
       {fileError && (
-        <div
-          className="flex items-center gap-2"
-          style={{
-            padding: '0.75rem 1rem',
-            background: 'rgba(239, 68, 68, 0.08)',
-            border: '1px solid rgba(239, 68, 68, 0.2)',
-            borderRadius: 'var(--radius-md)',
-            marginBottom: '1.5rem',
-            color: 'var(--color-error)',
-            fontSize: '0.875rem',
-          }}
-        >
+        <div className="panel flex items-center gap-2" style={{ color: 'var(--color-error)', borderColor: 'rgba(255, 107, 107, 0.28)' }}>
           <AlertCircle size={16} />
           {fileError}
         </div>
       )}
 
       {/* Metadata */}
-      <div className="card-elevated" style={{ marginBottom: '1.5rem' }}>
+      <div className="panel panel--raised">
         <h3 style={{ marginBottom: '1.25rem', fontSize: '1rem' }}>RFP Details</h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <div className="form-group">

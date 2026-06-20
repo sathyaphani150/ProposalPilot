@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import {
@@ -40,6 +40,8 @@ export function KnowledgeBase() {
   const {
     data: listResponse,
     isLoading: isListLoading,
+    isError: isListError,
+    error: listError,
     refetch: refetchItems,
   } = useQuery({
     queryKey: ['knowledgeItems'],
@@ -50,6 +52,8 @@ export function KnowledgeBase() {
   const {
     data: searchResponse,
     isLoading: isSearchLoading,
+    isError: isSearchError,
+    error: searchError,
   } = useQuery({
     queryKey: ['knowledgeSearch', searchTerm, filterDomain, filterType],
     queryFn: () => {
@@ -60,6 +64,18 @@ export function KnowledgeBase() {
     },
     enabled: searchTerm.trim().length > 0,
   })
+
+  useEffect(() => {
+    if (isListError && listError) {
+      toast.error('Failed to load knowledge items: ' + getErrorMessage(listError))
+    }
+  }, [isListError, listError])
+
+  useEffect(() => {
+    if (isSearchError && searchError) {
+      toast.error('Knowledge search failed: ' + getErrorMessage(searchError))
+    }
+  }, [isSearchError, searchError])
 
   // ── Mutations ────────────────────────────────────────────────────────────
   

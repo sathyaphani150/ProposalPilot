@@ -25,6 +25,7 @@ from app.services.rfp_engine import analyze_rfp_document
 
 settings = get_settings()
 STUCK_ANALYSIS_RECOVERY_SECONDS = 45
+DEFAULT_RFP_PAGE_SIZE = 20
 _ANALYSIS_TASKS: dict[str, asyncio.Task[None]] = {}
 
 
@@ -221,11 +222,19 @@ async def get_session_or_404(db: AsyncSession, session_id: uuid.UUID) -> RFPSess
 
 
 async def list_sessions(
-    db: AsyncSession, *, skip: int = 0, limit: int = 20
-) -> tuple[list[RFPSession], int]:
+    db: AsyncSession, *, skip: int = 0, limit: int = DEFAULT_RFP_PAGE_SIZE
+) -> tuple[list[RFPSession], int, dict[str, int]]:
     """Return paginated sessions ordered by creation date descending."""
     total_result = await db.execute(select(func.count(RFPSession.id)))
     total: int = total_result.scalar_one()
+
+    status_counts_result = await db.execute(
+        select(RFPSession.status, func.count(RFPSession.id)).group_by(RFPSession.status)
+    )
+    status_counts = {
+        str(status): int(count)
+        for status, count in status_counts_result.all()
+    }
 
     result = await db.execute(
         select(RFPSession)
@@ -234,7 +243,7 @@ async def list_sessions(
         .limit(limit)
     )
     sessions = list(result.scalars().all())
-    return sessions, total
+    return sessions, total, status_counts
 
 
 async def trigger_analysis(db: AsyncSession, session: RFPSession) -> str:

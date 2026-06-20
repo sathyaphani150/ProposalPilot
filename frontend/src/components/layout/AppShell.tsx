@@ -1,12 +1,12 @@
-import { Outlet, NavLink, useLocation } from 'react-router-dom'
+import { Outlet, NavLink, useLocation, useParams } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import {
   LayoutDashboard,
-  FileText,
   Database,
-  Swords,
   PlusCircle,
-  Zap,
 } from 'lucide-react'
+import { rfpApi } from '@/api/endpoints'
+import type { RFPStatus } from '@/types'
 
 const navItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -36,12 +36,10 @@ function Sidebar() {
     <aside className="sidebar">
       {/* Logo */}
       <div className="sidebar-logo">
-        <div className="sidebar-logo-icon">
-          <Zap size={18} color="white" />
-        </div>
-        <div>
+        <img className="sidebar-logo-icon" src="/proposalpilot-mark.svg" alt="" />
+        <div className="sidebar-logo-copy">
           <span className="sidebar-logo-text">ProposalPilot</span>
-          <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+          <div className="sidebar-logo-subtitle">
             RFP Intelligence
           </div>
         </div>
@@ -56,15 +54,6 @@ function Sidebar() {
             to={item.to}
             className={({ isActive }) =>
               `nav-item${isActive ? ' active' : ''}${item.accent ? ' btn-primary' : ''}`
-            }
-            style={({ isActive }) =>
-              item.accent && !isActive
-                ? {
-                    background: 'rgba(37, 99, 235, 0.16)',
-                    color: '#93c5fd',
-                    border: '1px solid rgba(96, 165, 250, 0.28)',
-                  }
-                : {}
             }
           >
             <item.icon size={18} />
@@ -85,44 +74,20 @@ function Sidebar() {
           </NavLink>
         ))}
 
-        {/* Workflow steps (contextual) */}
-        <span className="sidebar-section-label">Workflow</span>
-        <div
-          className="nav-item"
-          style={{ color: 'var(--color-text-muted)', fontSize: '0.8125rem', cursor: 'default' }}
-        >
-          <FileText size={16} />
-          Analyze RFP
-        </div>
-        <div
-          className="nav-item"
-          style={{ color: 'var(--color-text-muted)', fontSize: '0.8125rem', cursor: 'default' }}
-        >
-          <Swords size={16} />
-          War Room
-        </div>
       </nav>
-
-      {/* Footer */}
-      <div
-        style={{
-          padding: 'var(--spacing-md)',
-          borderTop: '1px solid var(--color-border)',
-          fontSize: '0.75rem',
-          color: 'var(--color-text-muted)',
-        }}
-      >
-        <div style={{ fontWeight: 600, color: 'var(--color-text-secondary)' }}>
-          Demo mode
-        </div>
-        <div>Grounded outputs only</div>
-      </div>
     </aside>
   )
 }
 
 function Topbar() {
   const location = useLocation()
+  const { sessionId } = useParams<{ sessionId: string }>()
+  const isSessionRoute = Boolean(sessionId && location.pathname.includes('/rfp/'))
+  const { data: session } = useQuery({
+    queryKey: ['rfpSession', sessionId],
+    queryFn: () => rfpApi.getById(sessionId!),
+    enabled: isSessionRoute,
+  })
   const getTitle = () => {
     const path = location.pathname
     if (path === '/dashboard') return 'Dashboard'
@@ -138,17 +103,36 @@ function Topbar() {
     <header className="topbar">
       <div className="flex items-center justify-between w-full">
         <div>
-          <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>{getTitle()}</h2>
+          <h2 className="topbar-title">{getTitle()}</h2>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="pulse" />
-            <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-              Grounded workflow ready
-            </span>
-          </div>
-        </div>
+        {isSessionRoute && <SessionPipeline status={session?.status} path={location.pathname} />}
       </div>
     </header>
+  )
+}
+
+function SessionPipeline({ status, path }: { status?: RFPStatus; path: string }) {
+  const stages = [
+    { label: 'Uploaded', statuses: ['uploaded', 'analyzing'] },
+    { label: 'RFP Analysis', statuses: ['analyzed'] },
+    { label: 'War Room', statuses: ['war_room_running', 'war_room_done'] },
+    { label: 'Proposal', statuses: ['proposal_ready'] },
+  ]
+  const routeIndex = path.includes('/proposal') ? 3 : path.includes('/war-room') ? 2 : path.includes('/analysis') ? 1 : 0
+  const statusIndex = Math.max(0, stages.findIndex((stage) => stage.statuses.includes(status || 'uploaded')))
+  const activeIndex = routeIndex
+  const completedThrough = Math.max(statusIndex - 1, routeIndex - 1)
+  return (
+    <div className="pipeline">
+      {stages.map((stage, index) => (
+        <span key={stage.label} className="flex items-center">
+          <span className={`pipeline-step ${index === activeIndex ? 'active' : index <= completedThrough ? 'done' : ''}`}>
+            <span className="status-dot" />
+            {stage.label}
+          </span>
+          {index < stages.length - 1 ? <span className="pipeline-connector" /> : null}
+        </span>
+      ))}
+    </div>
   )
 }

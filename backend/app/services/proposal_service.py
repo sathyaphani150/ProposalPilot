@@ -1,5 +1,5 @@
 """
-ProposalPilot AI - proposal and prep-pack generation service.
+ProposalPilot AI - final proposal generation service.
 """
 from __future__ import annotations
 
@@ -7,48 +7,11 @@ import uuid
 import re
 from typing import Any
 
-from loguru import logger
-from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import NotFoundError, ValidationError
-from app.models import Proposal, RFPAnalysis, RFPSession
-from app.services import knowledge_service
-from app.services.leadership_output import sanitize_prep_pack_content_for_leadership
-from app.services.llm_service import get_llm_service
-from app.services.rfp_engine import analyze_rfp_document
-
-
-class PrepPackLLMOutput(BaseModel):
-    rfp_summary: str = Field(description="Executive-grade opportunity summary, not copied RFP text.")
-    client_situation_assessment: str
-    prospect_call_narrative: str
-    value_propositions: list[str] = Field(default_factory=list)
-    discovery_questions: dict[str, list[str]] = Field(default_factory=dict)
-    talking_points: list[str] = Field(default_factory=list)
-    assumptions_to_validate: list[str] = Field(default_factory=list)
-    risks_and_assumptions: list[str] = Field(default_factory=list)
-    scope_guardrails: list[str] = Field(default_factory=list)
-    solution_narrative: str
-    proposed_architecture_direction: str
-    competitive_considerations: list[str] = Field(default_factory=list)
-
-
-_PREP_PACK_SYSTEM_PROMPT = """
-You are a senior strategy consultant, pursuit lead, and solution architect preparing
-company executives for an RFP discovery/qualification call.
-
-Generate a consulting-grade prep pack. Do not summarize the RFP. Do not copy
-tender/legal/procurement boilerplate. Do not invent facts. You may infer strategic
-implications only when supported by the provided analysis/evidence.
-
-The discovery questionnaire is the most important section. Questions must be
-specific to the opportunity, executive-friendly, and useful for non-technical
-stakeholders. Avoid generic questions unless they are tailored to the context.
-
-Return valid JSON matching the schema. Keep content concise, dense, and actionable.
-"""
+from app.models import Proposal, RFPAnalysis, RFPSession, WarRoomSession
 
 _TENDER_ADMIN_NOISE_TERMS = {
     "audited",
@@ -439,286 +402,9 @@ def _clean_question_groups(groups: Any) -> dict[str, list[str]]:
     return cleaned
 
 
-def _sanitize_prep_output(output: PrepPackLLMOutput) -> dict[str, Any]:
-    payload = output.model_dump()
-    for key in (
-        "value_propositions",
-        "talking_points",
-        "assumptions_to_validate",
-        "risks_and_assumptions",
-        "scope_guardrails",
-        "competitive_considerations",
-    ):
-        payload[key] = _dedupe_text(_as_raw_string_list(payload.get(key)))[:8]
-
-    payload["discovery_questions"] = _clean_question_groups(payload.get("discovery_questions"))
-
-    for key in (
-        "rfp_summary",
-        "client_situation_assessment",
-        "prospect_call_narrative",
-        "solution_narrative",
-        "proposed_architecture_direction",
-    ):
-        value = _clean_brief_item(str(payload.get(key) or ""))
-        payload[key] = value or str(payload.get(key) or "").strip()[:900]
-
-    return sanitize_prep_pack_content_for_leadership(payload)
-
-
 def proposal_to_public_dict(proposal: Proposal) -> dict[str, Any]:
-    """Serialize proposal without exposing raw prep-pack evidence dumps."""
-    payload = proposal.to_dict()
-    if payload.get("proposal_type") == "prep_pack":
-        payload["content"] = sanitize_prep_pack_content_for_leadership(payload.get("content") or {})
-    return payload
-
-
-async def _generate_llm_prep_pack_content(
-    session: RFPSession,
-    analysis: RFPAnalysis,
-    formatted_matches: list[dict[str, Any]],
-    fallback_content: dict[str, Any],
-) -> dict[str, Any] | None:
-    executive = _executive_intelligence(analysis)
-    kb_evidence = [
-        {
-            "title": match.get("title"),
-            "match_type": match.get("match_type"),
-            "confidence_score": match.get("confidence_score"),
-            "relevance_summary": match.get("relevance_summary"),
-            "reusable_assets": match.get("reusable_assets"),
-        }
-        for match in formatted_matches[:4]
-    ]
-    analysis_payload = {
-        "session_title": session.title,
-        "client_name": session.client_name,
-        "business_problem": analysis.business_problem,
-        "capability_tags": analysis.domain_tags,
-        "estimated_complexity": analysis.estimated_complexity,
-        "executive_intelligence": executive,
-        "functional_signals": _as_text_list(analysis.functional_requirements)[:6],
-        "integration_signals": _as_text_list(analysis.integration_needs)[:6],
-        "data_signals": _as_text_list(analysis.data_needs)[:6],
-        "security_compliance_signals": _as_text_list(analysis.compliance_needs)[:6],
-        "timeline_risk_signals": _as_text_list(analysis.timeline_risks)[:6],
-        "missing_information": _as_text_list(analysis.missing_information)[:8],
-        "kb_evidence": kb_evidence,
-    }
-
-    user_content = f"""
-Create the executive prep pack for this opportunity.
-
-Use this structured context:
-{analysis_payload}
-
-Requirements:
-- Discovery questions must be specific to the opportunity context above.
-- Include questions for business, operations, integration/data, governance/security, commercial, and success metrics where relevant.
-- Each question should help executives uncover hidden requirements, decision criteria, stakeholder alignment, risk, or future vision.
-- If KB evidence is weak or absent, say so indirectly through cautious positioning; do not invent past experience.
-- Do not copy raw RFP clauses.
-"""
-    try:
-        result: PrepPackLLMOutput = await get_llm_service().structured_extract(
-            system_prompt=_PREP_PACK_SYSTEM_PROMPT,
-            user_content=user_content,
-            output_schema=PrepPackLLMOutput,
-            temperature=0.15,
-        )
-        payload = _sanitize_prep_output(result)
-        if not payload.get("discovery_questions"):
-            return None
-        payload["similar_projects"] = fallback_content["similar_projects"]
-        payload["past_expertise_story"] = fallback_content["past_expertise_story"]
-        payload["quality_note"] = {
-            **fallback_content["quality_note"],
-            "generation_mode": "llm_grounded_prep_pack",
-        }
-        return payload
-    except Exception as exc:
-        logger.warning(f"LLM prep-pack generation unavailable; using deterministic fallback: {exc}")
-        return None
-
-
-async def _refresh_analysis_from_source(db: AsyncSession, session: RFPSession, existing: RFPAnalysis | None) -> RFPAnalysis:
-    if not session.raw_text:
-        if existing:
-            return existing
-        raise ValidationError("The uploaded RFP has no parsed text. Re-upload a text-readable PDF/DOCX before generating a prep pack.")
-
-    analysis_data = await analyze_rfp_document(session.raw_text)
-    if existing:
-        for key, value in analysis_data.items():
-            setattr(existing, key, value)
-        await db.flush()
-        await db.refresh(existing)
-        return existing
-
-    analysis = RFPAnalysis(session_id=session.id, **analysis_data)
-    db.add(analysis)
-    await db.flush()
-    await db.refresh(analysis)
-    return analysis
-
-
-def _build_prep_pack_content(
-    session: RFPSession,
-    analysis: RFPAnalysis,
-    matches: list[dict[str, Any]],
-    *,
-    query: str,
-    retrieval_warning: str | None = None,
-) -> dict[str, Any]:
-    functional = _as_text_list(analysis.functional_requirements)
-    nfrs = _as_text_list(analysis.non_functional_requirements)
-    integrations = _as_text_list(analysis.integration_needs)
-    data_needs = _as_text_list(analysis.data_needs)
-    compliance = _as_text_list(analysis.compliance_needs)
-    report = _executive_report(analysis)
-    risk_assessment = report.get("risk_assessment")
-    report_risks: list[Any] = risk_assessment if isinstance(risk_assessment, list) else []
-    risks = _dedupe_text(
-        [
-            f"{item.get('risk_title')}: {item.get('impact')}"
-            for item in report_risks
-            if isinstance(item, dict) and item.get("risk_title")
-        ]
-        or _as_text_list(analysis.timeline_risks)
-    )[:8]
-    guardrails = _as_text_list(analysis.scope_boundaries)
-    formatted_matches = _evidence_filtered_matches(matches, query)
-
-    best_match = formatted_matches[0] if formatted_matches else None
-    if best_match:
-        score = float(best_match.get("confidence_score") or 0)
-        if best_match.get("match_type") == "adjacent" or score < 0.65:
-            expertise_story = (
-                f"Adjacent match only. {best_match['title']} supports marketplace/catalog/search-scale credibility, "
-                "but it does not prove NLP-based query understanding, domain-specific operations, or the required search-stack integration expertise. "
-                "Use as secondary evidence unless stronger KB proof is connected."
-            )
-        else:
-            expertise_story = (
-                f"We have a relevant internal reference: {best_match['title']} "
-                f"({best_match['match_type']} match, confidence {best_match['confidence_score']}). "
-                f"The reusable evidence is: {best_match['relevance_summary']}"
-            )
-    else:
-        expertise_story = (
-            "No strong prior internal match was found yet. Position this as a new delivery "
-            "opportunity and ask targeted discovery questions before committing estimates."
-        )
-
-    content = {
-        "rfp_summary": analysis.business_problem
-        or f"{session.title} needs clarification before a proposal can be scoped.",
-        "client_situation_assessment": _client_situation_assessment(analysis),
-        "value_propositions": _value_propositions(analysis),
-        "assumptions_to_validate": _assumptions_to_validate(analysis),
-        "competitive_considerations": [
-            "A stronger competitor will avoid generic feature claims and instead show how they control delivery risk, buyer dependencies, security obligations, and value realization.",
-            "Differentiate by presenting a phased discovery-to-delivery approach with explicit assumptions, governance, and measurable outcomes.",
-            "Avoid overclaiming prior experience unless the Knowledge Base evidence is materially relevant to this opportunity.",
-        ],
-        "similar_projects": formatted_matches,
-        "past_expertise_story": expertise_story,
-        "prospect_call_narrative": _executive_narrative(analysis, formatted_matches),
-        "discovery_questions": _discovery_questions(analysis),
-        "talking_points": _talking_points(analysis, functional, integrations, compliance, nfrs),
-        "risks_and_assumptions": [
-            *risks[:6],
-            *[
-                f"Assumption: {item}"
-                for item in _as_text_list(analysis.missing_information)[:4]
-            ],
-        ],
-        "scope_guardrails": guardrails
-        or [
-            "Do not commit to fixed pricing until data, integration, timeline, and acceptance criteria are confirmed.",
-            "Keep first release scoped around the most valuable demonstrable workflow.",
-        ],
-        "proposed_architecture_direction": _architecture_direction(analysis, integrations, data_needs, compliance),
-        "solution_narrative": (
-            "Problem: the buyer has described a broad requirement with operational, technical, and commercial dependencies. "
-            "Approach: validate outcomes, users, data, integrations, security, and acceptance gates before final scope. "
-            "Solution: propose modular workstreams for workflow/user experience, integration, data/reporting, security, operations, and rollout governance. "
-            "Business outcome: reduce delivery ambiguity, improve operational control, and create a credible path from RFP response to measurable implementation value."
-        ),
-        "quality_note": {
-            "generation_mode": "deterministic_grounded",
-            "retrieval_warning": retrieval_warning,
-            "source": "RFP analysis plus internal KB search snippets",
-        },
-    }
-    return sanitize_prep_pack_content_for_leadership(content)
-
-
-async def generate_prep_pack(db: AsyncSession, session_id: uuid.UUID) -> Proposal:
-    result = await db.execute(select(RFPSession).where(RFPSession.id == session_id))
-    session = result.scalar_one_or_none()
-    if not session:
-        raise NotFoundError(f"RFP session {session_id} not found.")
-
-    analysis_result = await db.execute(
-        select(RFPAnalysis)
-        .where(RFPAnalysis.session_id == session_id)
-        .order_by(RFPAnalysis.created_at.desc())
-        .limit(1)
-    )
-    analysis = await _refresh_analysis_from_source(
-        db,
-        session,
-        analysis_result.scalar_one_or_none(),
-    )
-
-    query = _build_search_query(analysis)
-    matches: list[dict[str, Any]] = []
-    retrieval_warning = None
-    if query:
-        try:
-            matches = await knowledge_service.search_knowledge(query, limit=8)
-        except Exception as exc:
-            logger.warning(f"Knowledge retrieval failed during prep-pack generation: {exc}")
-            retrieval_warning = "Knowledge retrieval failed; prep pack uses only RFP analysis."
-
-    fallback_content = _build_prep_pack_content(
-        session,
-        analysis,
-        matches,
-        query=query,
-        retrieval_warning=retrieval_warning,
-    )
-    content = (
-        await _generate_llm_prep_pack_content(
-            session,
-            analysis,
-            fallback_content.get("similar_projects", []),
-            fallback_content,
-        )
-        or fallback_content
-    )
-
-    version_result = await db.execute(
-        select(func.count(Proposal.id)).where(
-            Proposal.rfp_session_id == session_id,
-            Proposal.proposal_type == "prep_pack",
-        )
-    )
-    version = int(version_result.scalar_one() or 0) + 1
-
-    proposal = Proposal(
-        rfp_session_id=session_id,
-        proposal_type="prep_pack",
-        version=version,
-        content=content,
-    )
-    db.add(proposal)
-    session.status = "prep_ready"
-    await db.flush()
-    await db.refresh(proposal)
-    return proposal
+    """Serialize a generated final proposal."""
+    return proposal.to_dict()
 
 
 async def get_proposal_or_404(db: AsyncSession, proposal_id: uuid.UUID) -> Proposal:
@@ -729,12 +415,88 @@ async def get_proposal_or_404(db: AsyncSession, proposal_id: uuid.UUID) -> Propo
     return proposal
 
 
-async def get_latest_prep_pack(db: AsyncSession, session_id: uuid.UUID) -> Proposal | None:
+async def generate_final_proposal(db: AsyncSession, session_id: uuid.UUID) -> Proposal:
+    session_result = await db.execute(select(RFPSession).where(RFPSession.id == session_id))
+    session = session_result.scalar_one_or_none()
+    if not session:
+        raise NotFoundError(f"RFP session {session_id} not found.")
+
+    war_room_result = await db.execute(
+        select(WarRoomSession)
+        .where(
+            WarRoomSession.rfp_session_id == session_id,
+            WarRoomSession.status == "complete",
+        )
+        .order_by(WarRoomSession.completed_at.desc(), WarRoomSession.created_at.desc())
+        .limit(1)
+    )
+    war_room = war_room_result.scalar_one_or_none()
+    if not war_room:
+        raise ValidationError("Complete the War Room before generating the final proposal.")
+
+    outputs = war_room.agent_outputs or {}
+    proposal_output = outputs.get("proposal") or {}
+    architect_output = outputs.get("architect") or {}
+    cfo_output = outputs.get("cfo") or {}
+
+    content = {
+        "executive_summary": proposal_output.get("executive_summary", ""),
+        "client_problem_statement": proposal_output.get("client_problem_restatement", ""),
+        "proposed_solution": (
+            proposal_output.get("proposed_solution_narrative")
+            or proposal_output.get("proposed_solution", "")
+        ),
+        "technical_architecture": (
+            proposal_output.get("architecture_section")
+            or architect_output.get("architecture_summary", "")
+        ),
+        "technology_stack": architect_output.get("recommended_stack", []),
+        "delivery_approach": proposal_output.get("delivery_approach", ""),
+        "commercial_summary": (
+            proposal_output.get("commercial_summary")
+            or proposal_output.get("cost_section", "")
+        ),
+        "resource_and_effort": {
+            "team_structure": cfo_output.get("team_structure", []),
+            "estimated_duration_weeks": cfo_output.get("estimated_duration_weeks"),
+            "effort_breakdown": cfo_output.get("effort_breakdown", []),
+            "pricing_model": cfo_output.get("pricing_model_recommendation", ""),
+            "cost_estimate": cfo_output.get("cost_estimate", {}),
+        },
+        "competitive_positioning": proposal_output.get("competitive_positioning", ""),
+        "compliance_matrix": proposal_output.get("compliance_matrix", []),
+        "risks": proposal_output.get("risks", []),
+        "assumptions": proposal_output.get("assumptions", []),
+        "exclusions": proposal_output.get("exclusions", []),
+        "consistency_flags": proposal_output.get("consistency_flags", []),
+    }
+
+    version_result = await db.execute(
+        select(func.count(Proposal.id)).where(
+            Proposal.rfp_session_id == session_id,
+            Proposal.proposal_type == "final_proposal",
+        )
+    )
+    proposal = Proposal(
+        rfp_session_id=session_id,
+        war_room_session_id=war_room.id,
+        proposal_type="final_proposal",
+        version=int(version_result.scalar_one() or 0) + 1,
+        content=content,
+    )
+    db.add(proposal)
+    session.status = "proposal_ready"
+    await db.flush()
+    await db.refresh(proposal)
+    return proposal
+
+
+async def get_latest_final_proposal(db: AsyncSession, session_id: uuid.UUID) -> Proposal | None:
     result = await db.execute(
         select(Proposal)
         .where(
             Proposal.rfp_session_id == session_id,
-            Proposal.proposal_type == "prep_pack",
+            Proposal.proposal_type == "final_proposal",
         )
         .order_by(Proposal.version.desc(), Proposal.created_at.desc())
         .limit(1)
