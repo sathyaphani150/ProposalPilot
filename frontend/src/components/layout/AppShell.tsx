@@ -4,7 +4,6 @@ import {
   LayoutDashboard,
   Database,
   PlusCircle,
-  Zap,
 } from 'lucide-react'
 import { rfpApi } from '@/api/endpoints'
 import type { RFPStatus } from '@/types'
@@ -37,9 +36,7 @@ function Sidebar() {
     <aside className="sidebar">
       {/* Logo */}
       <div className="sidebar-logo">
-        <div className="sidebar-logo-icon">
-          <Zap size={18} color="white" />
-        </div>
+        <img className="sidebar-logo-icon" src="/proposalpilot-mark.svg" alt="" />
         <div>
           <span className="sidebar-logo-text">ProposalPilot</span>
           <div className="text-xs text-muted mt-2">
@@ -78,14 +75,6 @@ function Sidebar() {
         ))}
 
       </nav>
-
-      {/* Footer */}
-      <div className="sidebar-footer">
-        <div className="font-semibold text-secondary">
-          Demo mode
-        </div>
-        <div>Grounded outputs only</div>
-      </div>
     </aside>
   )
 }
@@ -116,7 +105,7 @@ function Topbar() {
         <div>
           <h2 className="topbar-title">{getTitle()}</h2>
         </div>
-        {isSessionRoute ? <SessionPipeline status={session?.status} /> : <span className="text-xs text-muted">Command center ready</span>}
+        {isSessionRoute && <SessionPipeline status={session?.status} />}
       </div>
     </header>
   )
