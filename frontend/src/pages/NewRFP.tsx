@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useDropzone, type FileRejection } from 'react-dropzone'
 import toast from 'react-hot-toast'
 import { Upload, X, CheckCircle, AlertCircle } from 'lucide-react'
@@ -11,6 +11,7 @@ const MAX_SIZE = 20 * 1024 * 1024 // 20MB
 
 export function NewRFP() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [file, setFile] = useState<File | null>(null)
   const [clientName, setClientName] = useState('')
   const [title, setTitle] = useState('')
@@ -18,7 +19,8 @@ export function NewRFP() {
 
   const { mutate: uploadRFP, isPending } = useMutation({
     mutationFn: () => rfpApi.upload(file!, { clientName, title }),
-    onSuccess: (session) => {
+    onSuccess: async (session) => {
+      await queryClient.invalidateQueries({ queryKey: ['rfp-sessions'] })
       toast.success('RFP uploaded successfully!')
       navigate(`/rfp/${session.id}/analysis`)
     },

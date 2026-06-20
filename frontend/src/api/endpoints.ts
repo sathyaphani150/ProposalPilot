@@ -21,7 +21,7 @@ export const rfpApi = {
   },
 
   list: async (params?: { skip?: number; limit?: number }) => {
-    const { data } = await apiClient.get<{ items: RFPSession[]; total: number; status_counts: Partial<Record<RFPSession['status'], number>> }>(
+    const { data } = await apiClient.get<{ items: RFPSession[]; total: number; status_counts?: Partial<Record<RFPSession['status'], number>> }>(
       '/rfp',
       { params }
     )

@@ -37,9 +37,9 @@ function Sidebar() {
       {/* Logo */}
       <div className="sidebar-logo">
         <img className="sidebar-logo-icon" src="/proposalpilot-mark.svg" alt="" />
-        <div>
+        <div className="sidebar-logo-copy">
           <span className="sidebar-logo-text">ProposalPilot</span>
-          <div className="text-xs text-muted mt-2">
+          <div className="sidebar-logo-subtitle">
             RFP Intelligence
           </div>
         </div>

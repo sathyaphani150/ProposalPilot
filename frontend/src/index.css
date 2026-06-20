@@ -431,14 +431,29 @@ code, pre {
   flex-shrink: 0;
 }
 
+.sidebar-logo-copy {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+
 .sidebar-logo-text {
+  display: block;
   font-size: 1rem;
   font-weight: 700;
+  line-height: 1.25;
   color: var(--color-text-primary);
   background: none;
   -webkit-background-clip: text;
   -webkit-text-fill-color: currentColor;
   background-clip: text;
+}
+
+.sidebar-logo-subtitle {
+  font-size: 0.75rem;
+  line-height: 1.25;
+  color: var(--color-text-muted);
 }
 
 .sidebar-nav {

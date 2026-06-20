@@ -20,23 +20,36 @@ const STATUS_CONFIG: Record<RFPStatus, { label: string; className: string }> = {
   proposal_ready: { label: 'Proposal Ready', className: 'badge badge-done' },
 }
 
-// Recent list stays intentionally short; pipeline counts come from the backend aggregate.
+// Fetch enough sessions to support older backends that do not return status_counts.
 const RECENT_RFP_LIMIT = 20
+const DASHBOARD_FETCH_LIMIT = 1000
 
 export function Dashboard() {
   const navigate = useNavigate()
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['rfp-sessions'],
-    queryFn: () => rfpApi.list({ limit: RECENT_RFP_LIMIT }),
+    queryFn: () => rfpApi.list({ limit: DASHBOARD_FETCH_LIMIT }),
+    refetchInterval: 3000,
+    refetchIntervalInBackground: true,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: 'always',
   })
 
   useEffect(() => {
     if (isError && error) toast.error(getErrorMessage(error))
   }, [isError, error])
 
-  const sessions = data?.items ?? []
+  const allSessions = data?.items ?? []
+  const sessions = allSessions.slice(0, RECENT_RFP_LIMIT)
   const total = data?.total ?? 0
-  const statusCounts = data?.status_counts ?? {}
+  const derivedStatusCounts = allSessions.reduce<Partial<Record<RFPStatus, number>>>(
+    (counts, session) => {
+      counts[session.status] = (counts[session.status] ?? 0) + 1
+      return counts
+    },
+    {},
+  )
+  const statusCounts = data?.status_counts ?? derivedStatusCounts
   const pipelineStages = [
     { label: 'Uploaded', count: statusCounts.uploaded ?? 0 },
     { label: 'Analyzing', count: (statusCounts.analyzing ?? 0) + (statusCounts.prep_generating ?? 0) },
