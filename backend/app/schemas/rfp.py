@@ -32,6 +32,7 @@ class RFPSessionResponse(BaseModel):
 class RFPSessionListResponse(BaseModel):
     items: list[RFPSessionResponse]
     total: int
+    status_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class RFPAnalysisResponse(BaseModel):

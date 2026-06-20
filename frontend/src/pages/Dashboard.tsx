@@ -20,11 +20,14 @@ const STATUS_CONFIG: Record<RFPStatus, { label: string; className: string }> = {
   proposal_ready: { label: 'Proposal Ready', className: 'badge badge-done' },
 }
 
+// Recent list stays intentionally short; pipeline counts come from the backend aggregate.
+const RECENT_RFP_LIMIT = 20
+
 export function Dashboard() {
   const navigate = useNavigate()
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['rfp-sessions'],
-    queryFn: () => rfpApi.list({ limit: 20 }),
+    queryFn: () => rfpApi.list({ limit: RECENT_RFP_LIMIT }),
   })
 
   useEffect(() => {
@@ -33,12 +36,13 @@ export function Dashboard() {
 
   const sessions = data?.items ?? []
   const total = data?.total ?? 0
+  const statusCounts = data?.status_counts ?? {}
   const pipelineStages = [
-    { label: 'Uploaded', count: sessions.filter((s) => s.status === 'uploaded').length },
-    { label: 'Analyzing', count: sessions.filter((s) => ['analyzing', 'prep_generating'].includes(s.status)).length },
-    { label: 'Analyzed', count: sessions.filter((s) => ['analyzed', 'prep_ready'].includes(s.status)).length },
-    { label: 'War Room', count: sessions.filter((s) => ['war_room_running', 'war_room_done'].includes(s.status)).length },
-    { label: 'Proposal Ready', count: sessions.filter((s) => s.status === 'proposal_ready').length },
+    { label: 'Uploaded', count: statusCounts.uploaded ?? 0 },
+    { label: 'Analyzing', count: (statusCounts.analyzing ?? 0) + (statusCounts.prep_generating ?? 0) },
+    { label: 'Analyzed', count: (statusCounts.analyzed ?? 0) + (statusCounts.prep_ready ?? 0) },
+    { label: 'War Room', count: (statusCounts.war_room_running ?? 0) + (statusCounts.war_room_done ?? 0) },
+    { label: 'Proposal Ready', count: statusCounts.proposal_ready ?? 0 },
   ]
 
   const getNextAction = (session: RFPSession) => {

@@ -15,6 +15,7 @@ from app.config import get_settings
 
 settings = get_settings()
 router = APIRouter()
+DEFAULT_RFP_PAGE_SIZE = 20
 
 
 @router.post(
@@ -73,12 +74,13 @@ async def analyze_rfp(
 async def list_rfp_sessions(
     db: AsyncSession = Depends(get_db),
     skip: int = 0,
-    limit: int = 20,
+    limit: int = DEFAULT_RFP_PAGE_SIZE,
 ) -> RFPSessionListResponse:
-    sessions, total = await rfp_service.list_sessions(db, skip=skip, limit=limit)
+    sessions, total, status_counts = await rfp_service.list_sessions(db, skip=skip, limit=limit)
     return RFPSessionListResponse(
         items=[RFPSessionResponse.model_validate(s) for s in sessions],
         total=total,
+        status_counts=status_counts,
     )
 
 

@@ -21,6 +21,9 @@ settings = get_settings()
 
 T = TypeVar("T", bound=BaseModel)
 
+# Three attempts balances transient provider instability against user-visible latency.
+STRUCTURED_EXTRACTION_MAX_ATTEMPTS = 3
+
 
 def _is_non_retryable_llm_error(error: Exception) -> bool:
     """Return True for auth/config errors where retries only flood logs."""
@@ -264,7 +267,8 @@ class LLMService:
                 method="json_mode",
                 strict=True,
             )
-        except Exception:
+        except (TypeError, ValueError, NotImplementedError) as exc:
+            logger.debug(f"Strict JSON structured output setup unavailable; falling back to default method: {exc}")
             structured_model = model.with_structured_output(output_schema)
 
         messages: list[BaseMessage] = [
@@ -273,7 +277,7 @@ class LLMService:
         ]
 
         last_error: Exception | None = None
-        for attempt in range(3):
+        for attempt in range(STRUCTURED_EXTRACTION_MAX_ATTEMPTS):
             try:
                 result = await structured_model.ainvoke(messages)
                 # If result is already parsed Pydantic schema
@@ -318,9 +322,9 @@ class LLMService:
                         raise LLMServiceError(self._chat_disabled_reason)
 
                     logger.error(f"Fallback extraction failed: {fallback_error}")
-                    if attempt == 2:
+                    if attempt == STRUCTURED_EXTRACTION_MAX_ATTEMPTS - 1:
                         raise LLMServiceError(
-                            f"Structured extraction failed after 3 attempts: {str(e)} -> {str(fallback_error)}"
+                            f"Structured extraction failed after {STRUCTURED_EXTRACTION_MAX_ATTEMPTS} attempts: {str(e)} -> {str(fallback_error)}"
                         )
                     await asyncio.sleep(_llm_retry_delay_seconds(fallback_error, attempt))
 
@@ -387,7 +391,8 @@ class LLMService:
                 obj, end = decoder.raw_decode(cleaned_content[idx:])
                 results.append(obj)
                 idx += end
-            except Exception:
+            except json.JSONDecodeError as exc:
+                logger.debug(f"Skipping invalid JSON fragment while scanning LLM response: {exc}")
                 idx += 1
 
         if not results:
@@ -396,8 +401,8 @@ class LLMService:
             if json_match:
                 try:
                     return json.loads(json_match.group())
-                except Exception:
-                    pass
+                except json.JSONDecodeError as exc:
+                    logger.debug(f"Regex JSON extraction failed to decode matched content: {exc}")
             raise ValueError("No valid JSON found in LLM response content")
 
         merged = {}

@@ -6,12 +6,15 @@ import asyncio
 from loguru import logger
 from app.tasks.celery_app import celery_app
 
+TASK_MAX_RETRIES = 2
+TASK_RETRY_DELAY_SECONDS = 30
+
 
 @celery_app.task(
     bind=True,
     name="app.tasks.ingestion_tasks.analyze_rfp_task",
-    max_retries=2,
-    default_retry_delay=30,
+    max_retries=TASK_MAX_RETRIES,
+    default_retry_delay=TASK_RETRY_DELAY_SECONDS,
     queue="ingestion",
 )
 def analyze_rfp_task(self, session_id: str) -> dict:
@@ -80,8 +83,10 @@ def analyze_rfp_task(self, session_id: str) -> dict:
                     try:
                         session.status = "analysis_failed"
                         await db.commit()
-                    except Exception:
-                        pass
+                    except Exception as rollback_exc:
+                        logger.warning(
+                            f"[Task] Failed to persist analysis_failed status for session {session_id}: {rollback_exc}"
+                        )
                 raise
             finally:
                 await engine.dispose()
@@ -95,8 +100,8 @@ def analyze_rfp_task(self, session_id: str) -> dict:
 @celery_app.task(
     bind=True,
     name="app.tasks.ingestion_tasks.ingest_knowledge_item_task",
-    max_retries=2,
-    default_retry_delay=30,
+    max_retries=TASK_MAX_RETRIES,
+    default_retry_delay=TASK_RETRY_DELAY_SECONDS,
     queue="ingestion",
 )
 def ingest_knowledge_item_task(self, knowledge_item_id: str) -> dict:

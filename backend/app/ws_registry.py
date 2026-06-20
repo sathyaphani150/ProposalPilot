@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import WebSocket
+from loguru import logger
 
 _subscribers: dict[str, list[WebSocket]] = {}
 
@@ -20,5 +21,9 @@ async def broadcast(session_id: str, message: dict) -> None:
     for ws in list(_subscribers.get(session_id, [])):
         try:
             await ws.send_json(message)
-        except Exception:
+        except RuntimeError as exc:
+            logger.debug(f"Removing closed websocket subscriber for {session_id}: {exc}")
+            unsubscribe(session_id, ws)
+        except Exception as exc:
+            logger.warning(f"Failed to broadcast websocket message for {session_id}; unsubscribing client: {exc}")
             unsubscribe(session_id, ws)
