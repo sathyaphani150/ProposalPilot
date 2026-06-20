@@ -1,6 +1,9 @@
+import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
+import toast from 'react-hot-toast'
 import { FileText, PlusCircle, Database, Clock, TrendingUp, Swords } from 'lucide-react'
+import { getErrorMessage } from '@/api/client'
 import { rfpApi } from '@/api/endpoints'
 import type { RFPSession, RFPStatus } from '@/types'
 import { formatDistanceToNow } from 'date-fns'
@@ -20,10 +23,16 @@ const STATUS_CONFIG: Record<RFPStatus, { label: string; className: string }> = {
 export function Dashboard() {
   const navigate = useNavigate()
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['rfp-sessions'],
     queryFn: () => rfpApi.list({ limit: 20 }),
   })
+
+  useEffect(() => {
+    if (isError && error) {
+      toast.error(getErrorMessage(error))
+    }
+  }, [isError, error])
 
   const sessions = data?.items ?? []
   const total = data?.total ?? 0

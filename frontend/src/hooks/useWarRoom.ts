@@ -6,11 +6,16 @@ export function useWarRoom(warRoomId: string | undefined) {
   const [events, setEvents] = useState<AgentEvent[]>([])
   const [agentStatus, setAgentStatus] = useState<Record<string, 'pending' | 'done' | 'error'>>({})
   const wsRef = useRef<WebSocket | null>(null)
+  const [prevWarRoomId, setPrevWarRoomId] = useState<string | undefined>(warRoomId)
+
+  if (warRoomId !== prevWarRoomId) {
+    setPrevWarRoomId(warRoomId)
+    setEvents([])
+    setAgentStatus({})
+  }
 
   useEffect(() => {
     if (!warRoomId) return
-    setEvents([])
-    setAgentStatus({})
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
     const ws = new WebSocket(`${protocol}://${window.location.host}/ws/war-room/${warRoomId}`)
     wsRef.current = ws
