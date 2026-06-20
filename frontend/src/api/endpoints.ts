@@ -1,8 +1,8 @@
 /**
  * ProposalPilot AI — RFP API Functions
  */
-import { apiClient } from './client'
 import axios from 'axios'
+import { apiClient } from './client'
 import type { KnowledgeItem, KnowledgeSearchResult, Proposal, RFPSession, RFPAnalysis } from '@/types'
 
 export const rfpApi = {
@@ -103,11 +103,21 @@ export const knowledgeApi = {
 
 export const warRoomApi = {
   start: async (sessionId: string, callNotes?: string) => {
-    const { data } = await apiClient.post('/war-room/run', {
-      session_id: sessionId,
-      call_notes: callNotes,
-    })
-    return data
+    try {
+      const { data } = await apiClient.post(`/war-room/${sessionId}/start`, {
+        call_notes: callNotes,
+      })
+      return data
+    } catch (error) {
+      if (!axios.isAxiosError(error) || error.response?.status !== 404) {
+        throw error
+      }
+      const { data } = await apiClient.post('/war-room/run', {
+        session_id: sessionId,
+        call_notes: callNotes,
+      })
+      return data
+    }
   },
 
   override: async (sessionId: string, overrides: Record<string, unknown>) => {

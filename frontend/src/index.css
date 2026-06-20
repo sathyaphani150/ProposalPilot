@@ -1153,6 +1153,318 @@ code, pre {
   background: rgba(11, 16, 22, 0.38);
 }
 
+.architecture-diagram {
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: rgba(8, 13, 20, 0.72);
+  padding: 1rem;
+  overflow: hidden;
+}
+
+.architecture-diagram-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.architecture-diagram-header h4 {
+  margin: 0 0 0.25rem;
+}
+
+.architecture-diagram-header p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.architecture-executive-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.65rem;
+  margin-bottom: 0.9rem;
+}
+
+.architecture-executive-item {
+  display: grid;
+  grid-template-columns: 1.65rem minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: start;
+  border: 1px solid rgba(59, 130, 246, 0.18);
+  border-radius: var(--radius-md);
+  background: rgba(37, 99, 235, 0.08);
+  padding: 0.65rem;
+}
+
+.architecture-executive-item span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.45rem;
+  height: 1.45rem;
+  border-radius: 999px;
+  background: rgba(96, 165, 250, 0.2);
+  color: var(--color-primary-light);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.architecture-executive-item p {
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.architecture-map {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 0.85rem;
+  align-items: stretch;
+}
+
+.architecture-lane {
+  position: relative;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.74), rgba(11, 16, 22, 0.44));
+  min-height: 0;
+  padding: 0.75rem;
+}
+
+.architecture-lane-header {
+  min-height: 5.2rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.65rem;
+}
+
+.architecture-lane-header h5,
+.architecture-path-header h5 {
+  margin: 0 0 0.35rem;
+  color: var(--color-text-primary);
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+.architecture-lane-header p,
+.architecture-path-header p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  line-height: 1.42;
+}
+
+.architecture-lane-arrow {
+  position: absolute;
+  top: 1.15rem;
+  right: -0.72rem;
+  width: 1.2rem;
+  height: 1.2rem;
+  border-top: 1px solid rgba(96, 165, 250, 0.45);
+  border-right: 1px solid rgba(96, 165, 250, 0.45);
+  transform: rotate(45deg);
+  background: rgba(8, 13, 20, 0.72);
+  z-index: 1;
+}
+
+.architecture-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.75rem;
+  align-items: stretch;
+}
+
+.architecture-group {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: var(--radius-md);
+  background: rgba(15, 23, 42, 0.55);
+  min-height: 0;
+  padding: 0.7rem;
+}
+
+.architecture-group-title {
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 0.7rem;
+}
+
+.architecture-node-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.architecture-node {
+  border: 1px solid rgba(96, 165, 250, 0.24);
+  border-radius: var(--radius-md);
+  background: rgba(15, 23, 42, 0.8);
+  padding: 0.75rem;
+  min-height: 112px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  overflow-wrap: anywhere;
+}
+
+.architecture-node-person {
+  border-color: rgba(20, 184, 166, 0.34);
+  background: rgba(15, 118, 110, 0.14);
+}
+
+.architecture-node-external-system {
+  border-color: rgba(245, 158, 11, 0.3);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.architecture-node-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  color: var(--color-text-primary);
+  font-size: 0.9rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.architecture-node-title svg {
+  color: var(--color-primary-light);
+  flex-shrink: 0;
+  margin-top: 0.05rem;
+}
+
+.architecture-node p {
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.architecture-node-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+  margin-top: auto;
+  min-width: 0;
+}
+
+.architecture-node-footer span {
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  overflow-wrap: anywhere;
+}
+
+.architecture-node-footer strong {
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 650;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.architecture-tech {
+  color: var(--color-accent);
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  margin-top: auto;
+}
+
+.architecture-path {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 0.55rem;
+  margin-top: 0.9rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+  padding-top: 0.9rem;
+}
+
+.architecture-path-header {
+  grid-column: 1 / -1;
+}
+
+.architecture-path-step {
+  display: grid;
+  grid-template-columns: 1.6rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: var(--radius-md);
+  padding: 0.5rem 0.6rem;
+  background: rgba(11, 16, 22, 0.45);
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  min-width: 0;
+}
+
+.architecture-path-step strong {
+  color: var(--color-primary-light);
+  font-size: 0.74rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.architecture-path-step span:not(.architecture-flow-index),
+.architecture-path-step strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.architecture-path-step span:not(.architecture-flow-index):first-of-type {
+  color: var(--color-text-secondary);
+}
+
+.architecture-path-step strong,
+.architecture-path-step span:not(.architecture-flow-index):last-child {
+  grid-column: 2;
+}
+
+.architecture-path-step strong::after {
+  content: ' ->';
+  color: var(--color-text-muted);
+}
+
+.architecture-flow-index {
+  grid-row: 1 / span 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.45rem;
+  height: 1.45rem;
+  border-radius: 999px;
+  color: var(--color-bg);
+  background: var(--color-primary-light);
+  font-weight: 800;
+}
+
+.architecture-dsl {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: rgba(11, 16, 22, 0.5);
+  padding: 0.75rem 0.9rem;
+}
+
+.architecture-dsl summary {
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+}
+
+.architecture-dsl pre {
+  margin-top: 0.75rem;
+  max-height: 360px;
+  overflow: auto;
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
 .side-stack {
   display: flex;
   flex-direction: column;
@@ -1179,6 +1491,12 @@ code, pre {
   .prep-two-column,
   .question-grid {
     grid-template-columns: 1fr;
+  }
+  .architecture-path {
+    grid-template-columns: 1fr;
+  }
+  .architecture-lane-arrow {
+    display: none;
   }
 }
 

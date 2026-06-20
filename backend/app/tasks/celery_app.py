@@ -2,7 +2,7 @@
 ProposalPilot AI — Celery Application
 Configured async task queue for background processing.
 """
-from celery import Celery
+from celery import Celery  # type: ignore[import-untyped]
 from app.config import get_settings
 
 settings = get_settings()

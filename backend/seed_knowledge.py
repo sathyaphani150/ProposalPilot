@@ -61,28 +61,6 @@ PROJECTS = [
         }
     },
     {
-        "title": "LogiTrack Logistics Orchestrator",
-        "item_type": "project",
-        "domain": "logistics",
-        "tech_stack": ["Python", "FastAPI", "Celery", "Redis", "Qdrant", "React", "Tailwind CSS", "Google Maps API"],
-        "tags": ["route optimization", "vector database", "real-time tracking", "geographic search"],
-        "description": (
-            "LogiTrack is an enterprise-grade fleet monitoring, shipment tracking, and route optimization platform. "
-            "It optimizes daily delivery schedules and warehouse allocations for a nationwide distribution company. "
-            "The system leverages Qdrant vector database for hybrid geographic and semantic search of distribution points. "
-            "Built with FastAPI and Celery/Redis for computing heavy optimization algorithms in the background. "
-            "The frontend is a React + Tailwind CSS dashboard with Google Maps API integration. "
-            "Streams live driver locations and ETA changes to clients via WebSockets and Server-Sent Events (SSE)."
-        ),
-        "extra_metadata": {
-            "budget": "$220,000",
-            "duration": "5 months",
-            "team_size": 6,
-            "architecture": "Event-Driven Worker Pattern",
-            "margins": "58%"
-        }
-    },
-    {
         "title": "ShopFlow E-Commerce Suite",
         "item_type": "project",
         "domain": "ecommerce",

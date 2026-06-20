@@ -97,10 +97,42 @@ export interface NarrativeSection {
   confidence?: string
 }
 
+export interface ArchitectureDiagramNode {
+  id: string
+  label: string
+  kind?: string
+  group: string
+  description?: string
+  technology?: string
+}
+
+export interface ArchitectureDiagramEdge {
+  from: string
+  to: string
+  label: string
+}
+
+export interface ArchitectureDiagramLane {
+  id: string
+  title: string
+  description?: string
+  groups?: string[]
+  node_ids?: string[]
+}
+
+export interface ArchitectureDiagram {
+  title?: string
+  notation?: string
+  view?: string
+  executive_summary?: string[]
+  lanes?: ArchitectureDiagramLane[]
+  primary_flow?: ArchitectureDiagramEdge[]
+  nodes?: ArchitectureDiagramNode[]
+  edges?: ArchitectureDiagramEdge[]
+}
+
 export interface ArchitectureSection {
   summary?: string
-  components?: string[]
-  assumptions?: string[]
   business_view?: string[]
   technical_view?: string[]
   data_flow?: string[]
@@ -110,6 +142,8 @@ export interface ArchitectureSection {
   call_prep_questions?: string[]
   architecture_text?: string
   mermaid?: string
+  diagram?: ArchitectureDiagram
+  structurizr_dsl?: string
   generated_by?: string
 }
 

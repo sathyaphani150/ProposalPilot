@@ -5,6 +5,7 @@ Handles chunking, embedding, and storing KB documents in vector & relational DBs
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import KnowledgeItem
+from app.database import AsyncSessionLocal
 from app.services.document_parser import parse_document
 from app.services.llm_service import get_llm_service
 from app.services.vector_service import upsert_chunks, hybrid_search, delete_by_doc_id
@@ -20,6 +22,25 @@ from app.config import get_settings
 from app.exceptions import NotFoundError
 
 settings = get_settings()
+
+TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9.+#/-]*")
+STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "for",
+    "in",
+    "is",
+    "of",
+    "on",
+    "or",
+    "the",
+    "to",
+    "using",
+    "with",
+}
 
 
 def chunk_text(text: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> list[str]:
@@ -125,20 +146,43 @@ async def create_knowledge_item(
         item.qdrant_point_ids = point_ids
         item.chunk_count = chunk_count
         await db.flush()
+        await db.refresh(item)
         logger.info(
             f"Created and indexed knowledge item {item.id} with {chunk_count} chunks"
         )
     except Exception as exc:
+        item.qdrant_point_ids = []
+        item.chunk_count = await estimate_chunk_count(item)
+        await db.flush()
+        await db.refresh(item)
         logger.warning(
-            f"Immediate indexing failed for knowledge item {item.id}; "
-            f"falling back to Celery task: {exc}"
+            f"Knowledge item {item.id} was saved, but vector indexing failed. "
+            f"Database keyword search will remain available. Reason: {exc}"
         )
-        from app.tasks.ingestion_tasks import ingest_knowledge_item_task
-
-        task = ingest_knowledge_item_task.delay(str(item.id))
-        logger.info(f"Dispatched KB ingestion task {task.id} for {item.id}")
 
     return item
+
+
+async def extract_knowledge_text(item: KnowledgeItem) -> str:
+    """Return the searchable source text for a knowledge item."""
+    if item.file_path and os.path.exists(item.file_path):
+        try:
+            return await parse_document(item.file_path)
+        except Exception as e:
+            logger.error(f"Failed to parse document file {item.file_path}: {e}")
+            if item.description:
+                return item.description
+            raise
+
+    return item.description or ""
+
+
+async def estimate_chunk_count(item: KnowledgeItem) -> int:
+    """Best-effort chunk count used when vector indexing is unavailable."""
+    try:
+        return len(chunk_text(await extract_knowledge_text(item)))
+    except Exception:
+        return 0
 
 
 async def process_knowledge_item(item: KnowledgeItem) -> tuple[list[str], int]:
@@ -149,19 +193,8 @@ async def process_knowledge_item(item: KnowledgeItem) -> tuple[list[str], int]:
     logger.info(f"Processing knowledge item {item.id} of type {item.item_type}")
     
     # 1. Get raw text
-    raw_text = ""
-    if item.file_path and os.path.exists(item.file_path):
-        try:
-            raw_text = await parse_document(item.file_path)
-        except Exception as e:
-            logger.error(f"Failed to parse document file {item.file_path}: {e}")
-            if item.description:
-                raw_text = item.description
-            else:
-                raise
-    elif item.description:
-        raw_text = item.description
-    else:
+    raw_text = await extract_knowledge_text(item)
+    if not raw_text:
         logger.warning(f"Knowledge item {item.id} has no file path or description")
         return [], 0
         
@@ -201,27 +234,181 @@ async def search_knowledge(
     domain: str | None = None,
     item_type: str | None = None,
     limit: int = 5,
+    db: AsyncSession | None = None,
 ) -> list[dict[str, Any]]:
     """
-    Perform hybrid search in the knowledge base.
+    Perform resilient KB search.
+
+    Vector retrieval is preferred when available, but database lexical search is
+    always merged in so newly ingested records remain searchable even if Qdrant,
+    embeddings, or Celery are unavailable during a demo.
     """
-    llm_service = get_llm_service()
-    query_vector = await llm_service.embed_query(query)
+    vector_results: list[dict[str, Any]] = []
 
-    filters = {}
+    try:
+        llm_service = get_llm_service()
+        query_vector = await llm_service.embed_query(query)
+
+        filters = {}
+        if domain:
+            filters["domain"] = domain
+        if item_type:
+            filters["item_type"] = item_type
+
+        vector_results = await hybrid_search(
+            collection_name=settings.QDRANT_COLLECTION_KB,
+            query_vector=query_vector,
+            query_text=query,
+            top_k=limit,
+            filters=filters if filters else None,
+        )
+    except Exception as exc:
+        logger.warning(f"Vector KB search unavailable; using database search fallback: {exc}")
+
+    if db is not None:
+        db_results = await keyword_search_knowledge_items(
+            db,
+            query=query,
+            domain=domain,
+            item_type=item_type,
+            limit=limit,
+        )
+    else:
+        async with AsyncSessionLocal() as temp_db:
+            db_results = await keyword_search_knowledge_items(
+                temp_db,
+                query=query,
+                domain=domain,
+                item_type=item_type,
+                limit=limit,
+            )
+
+    return _merge_search_results(vector_results, db_results, limit)
+
+
+async def keyword_search_knowledge_items(
+    db: AsyncSession,
+    *,
+    query: str,
+    domain: str | None = None,
+    item_type: str | None = None,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Deterministic metadata/content search over saved KB records."""
+    stmt = select(KnowledgeItem).where(KnowledgeItem.is_active.is_(True))
     if domain:
-        filters["domain"] = domain
+        stmt = stmt.where(KnowledgeItem.domain == domain)
     if item_type:
-        filters["item_type"] = item_type
+        stmt = stmt.where(KnowledgeItem.item_type == item_type)
 
-    results = await hybrid_search(
-        collection_name=settings.QDRANT_COLLECTION_KB,
-        query_vector=query_vector,
-        query_text=query,
-        top_k=limit,
-        filters=filters if filters else None,
-    )
-    return results
+    result = await db.execute(stmt.order_by(KnowledgeItem.created_at.desc()).limit(500))
+    scored: list[tuple[float, KnowledgeItem]] = []
+    for item in result.scalars().all():
+        score = _score_knowledge_item(item, query)
+        if score > 0:
+            scored.append((score, item))
+
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    return [_knowledge_item_to_search_result(item, score) for score, item in scored[:limit]]
+
+
+def _tokenize(text: str) -> list[str]:
+    tokens = [match.group(0) for match in TOKEN_RE.finditer(text.lower())]
+    return [token for token in tokens if token not in STOP_WORDS]
+
+
+def _metadata_text(item: KnowledgeItem) -> str:
+    values: list[str] = []
+    metadata = item.extra_metadata or {}
+    for value in metadata.values():
+        if isinstance(value, (str, int, float)):
+            values.append(str(value))
+        elif isinstance(value, list):
+            values.extend(str(entry) for entry in value if isinstance(entry, (str, int, float)))
+    return " ".join(values)
+
+
+def _score_knowledge_item(item: KnowledgeItem, query: str) -> float:
+    tokens = _tokenize(query)
+    if not tokens:
+        return 0.0
+
+    fields = [
+        (item.title or "", 1.0),
+        (" ".join(item.tech_stack or []), 0.9),
+        (" ".join(item.tags or []), 0.9),
+        (item.domain or "", 0.7),
+        (item.item_type or "", 0.45),
+        (item.description or "", 0.7),
+        (_metadata_text(item), 0.5),
+        (item.original_filename or "", 0.35),
+    ]
+    lowered_fields = [(text.lower(), weight) for text, weight in fields if text]
+
+    weighted_total = 0.0
+    matched_tokens = 0
+    for token in tokens:
+        token_weight = max(
+            (weight for text, weight in lowered_fields if token in text),
+            default=0.0,
+        )
+        if token_weight:
+            matched_tokens += 1
+            weighted_total += token_weight
+
+    if matched_tokens == 0:
+        return 0.0
+
+    phrase = query.lower().strip()
+    phrase_bonus = 0.0
+    if phrase and item.title and phrase in item.title.lower():
+        phrase_bonus += 0.2
+    if phrase and item.description and phrase in item.description.lower():
+        phrase_bonus += 0.15
+
+    coverage = matched_tokens / len(tokens)
+    weighted = weighted_total / len(tokens)
+    return min(0.98, 0.12 + (coverage * 0.38) + (weighted * 0.36) + phrase_bonus)
+
+
+def _knowledge_item_to_search_result(item: KnowledgeItem, score: float) -> dict[str, Any]:
+    text = item.description or _metadata_text(item) or item.title
+    if len(text) > 900:
+        text = text[:897].rstrip() + "..."
+    return {
+        "point_id": f"db:{item.id}",
+        "score": score,
+        "text": text,
+        "doc_id": str(item.id),
+        "chunk_index": 0,
+        "item_type": item.item_type,
+        "title": item.title,
+        "domain": item.domain,
+        "tech_stack": item.tech_stack or [],
+        "tags": item.tags or [],
+    }
+
+
+def _merge_search_results(
+    vector_results: list[dict[str, Any]],
+    db_results: list[dict[str, Any]],
+    limit: int,
+) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+
+    for result in [*vector_results, *db_results]:
+        doc_id = str(result.get("doc_id") or result.get("point_id") or "")
+        if not doc_id:
+            continue
+        existing = merged.get(doc_id)
+        if existing is None or float(result.get("score") or 0) > float(existing.get("score") or 0):
+            merged[doc_id] = result
+
+    return sorted(
+        merged.values(),
+        key=lambda item: float(item.get("score") or 0),
+        reverse=True,
+    )[:limit]
 
 
 async def list_items(

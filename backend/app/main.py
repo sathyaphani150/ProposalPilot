@@ -7,6 +7,7 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
@@ -18,6 +19,12 @@ from app.exceptions import ProposalPilotError
 from app.logging_config import configure_logging
 
 settings = get_settings()
+
+
+def _local_dev_cors_origin_regex() -> str | None:
+    if settings.is_production:
+        return None
+    return r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────
@@ -93,6 +100,7 @@ def _register_middleware(app: FastAPI) -> None:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.APP_CORS_ORIGINS,
+        allow_origin_regex=_local_dev_cors_origin_regex(),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -150,7 +158,7 @@ def _register_exception_handlers(app: FastAPI) -> None:
             content={
                 "error": "VALIDATION_ERROR",
                 "message": "Request body validation failed.",
-                "detail": exc.errors(),
+                "detail": jsonable_encoder(exc.errors()),
                 "request_id": getattr(request.state, "request_id", None),
             },
         )

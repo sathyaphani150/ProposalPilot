@@ -173,6 +173,12 @@ def test_current_rfp_intelligence_response_does_not_force_recovery() -> None:
             "rfp_intelligence": {
                 "sentiment_analysis": {"summary": "Current RFP intelligence."},
                 "must_ask_questions": [{"question": "What outcome matters?"}],
+                "architecture": {
+                    "diagram": {
+                        "nodes": [{"id": "workflow", "label": "Workflow services", "group": "Solution Core"}],
+                        "edges": [],
+                    }
+                },
             },
         },
         ["Question"] * 3,
@@ -200,6 +206,10 @@ def test_leadership_analysis_response_hides_raw_debug_and_admin_noise() -> None:
     assert payload["analysis_brief"]["top_questions"]
     assert raw["rfp_intelligence"]["must_ask_questions"]
     assert raw["rfp_intelligence"]["architecture"]
+    assert raw["rfp_intelligence"]["architecture"]["diagram"]["nodes"]
+    assert raw["rfp_intelligence"]["architecture"]["diagram"]["lanes"]
+    assert raw["rfp_intelligence"]["architecture"]["diagram"]["primary_flow"]
+    assert "workspace" in raw["rfp_intelligence"]["architecture"]["structurizr_dsl"]
     assert "architecture_text" not in raw["rfp_intelligence"]["architecture"]
     assert "mermaid" not in raw["rfp_intelligence"]["architecture"]
 
@@ -214,17 +224,25 @@ def test_rfp_intelligence_is_specific_to_each_rfp_not_static_templates() -> None
     search_risks = {item["risk_title"] for item in search["top_risks"]}
     mobile_points = {item["point"] for item in mobile["talking_points"]}
     search_points = {item["point"] for item in search["talking_points"]}
-    mobile_components = set(mobile["architecture"]["components"])
-    search_components = set(search["architecture"]["components"])
+    mobile_node_ids = {node["id"] for node in mobile["architecture"]["diagram"]["nodes"]}
+    search_node_ids = {node["id"] for node in search["architecture"]["diagram"]["nodes"]}
+    search_node_labels = {node["label"] for node in search["architecture"]["diagram"]["nodes"]}
+    mobile_node_labels = {node["label"] for node in mobile["architecture"]["diagram"]["nodes"]}
 
     assert mobile_questions != search_questions
     assert mobile_risks != search_risks
     assert mobile_points != search_points
-    assert mobile_components != search_components
+    assert mobile_node_ids != search_node_ids
     assert any("Mobile APIs" in question or "mobile" in question.lower() for question in mobile_questions)
     assert any("search" in question.lower() or "query" in question.lower() for question in search_questions)
-    assert any("Mobile" in component or "learning" in component.lower() for component in mobile_components)
-    assert any("Search" in component or "query" in component.lower() or "NLP" in component for component in search_components)
+    assert any("Mobile" in label or "learning" in label.lower() for label in mobile_node_labels)
+    assert any("Search" in label or "query" in label.lower() or "NLP" in label for label in search_node_labels)
+    assert "mobileApp" in mobile_node_ids
+    assert "contentAdmin" in mobile_node_ids
+    assert "queryUnderstanding" in search_node_ids
+    assert "categoryClassifier" in search_node_ids
+    assert "solrSearch" in search_node_ids
+    assert any("Solr" in label or "query" in label.lower() for label in search_node_labels)
 
 
 def test_fallback_intelligence_does_not_emit_reused_card_headings() -> None:
@@ -246,9 +264,8 @@ def test_fallback_intelligence_does_not_emit_reused_card_headings() -> None:
         assert fragment not in response_text
 
     assert any(item.get("category") for item in intelligence["must_ask_questions"])
-    assert not any(component.startswith("Core Capability Service:") for component in intelligence["architecture"]["components"])
-    assert not any(component.startswith("Integration Adapter:") for component in intelligence["architecture"]["components"])
-    assert not any(component.startswith("Operational Data Store:") for component in intelligence["architecture"]["components"])
+    assert "components" not in intelligence["architecture"]
+    assert "assumptions" not in intelligence["architecture"]
 
 
 def test_etrm_call_prep_avoids_false_ai_and_weak_evidence() -> None:
@@ -272,7 +289,28 @@ def test_etrm_call_prep_avoids_false_ai_and_weak_evidence() -> None:
     assert architecture["business_view"]
     assert architecture["technical_view"]
     assert architecture["security_operations"]
-    assert not any(component.endswith(" of") or component.endswith(" in") for component in architecture["components"])
+    assert architecture["diagram"]["notation"] == "Deployment flow / C4 container model"
+    assert any(node["group"] == "Migration Core" for node in architecture["diagram"]["nodes"])
+    assert architecture["diagram"]["executive_summary"]
+    assert [lane["title"] for lane in architecture["diagram"]["lanes"]][:4] == [
+        "1. Current estate",
+        "2. Migration workstream",
+        "3. Target runtime",
+        "4. Validation and release",
+    ]
+    assert any("awsRuntime" in lane["node_ids"] for lane in architecture["diagram"]["lanes"])
+    assert architecture["diagram"]["primary_flow"] == architecture["diagram"]["edges"]
+    assert architecture["diagram"]["title"].startswith("Cloud Migration")
+    assert {node["id"] for node in architecture["diagram"]["nodes"]} >= {
+        "currentApplication",
+        "migrationRunbook",
+        "awsRuntime",
+        "testEnvironment",
+        "releasePipeline",
+    }
+    assert "container solution" in architecture["structurizr_dsl"]
+    assert "components" not in architecture
+    assert "assumptions" not in architecture
 
 
 def test_rfp_analysis_ui_uses_executive_tab_set_only() -> None:
@@ -288,6 +326,8 @@ def test_rfp_analysis_ui_uses_executive_tab_set_only() -> None:
     assert "Open War Room" in text
     assert "Architecture Detail" not in text
     assert "Mermaid Diagram" not in text
+    assert "architecture.generated_by" not in text
+    assert "gpt-oss" not in text
     tabs_block = text[text.index("const tabs = [") : text.index("]", text.index("const tabs = ["))]
     assert "'Leadership Snapshot'" not in tabs_block
     assert "'CEO Brief'" not in tabs_block

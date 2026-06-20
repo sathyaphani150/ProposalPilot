@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import {
   Search,
@@ -18,6 +18,7 @@ import { KNOWLEDGE_DOMAIN_OPTIONS, KNOWLEDGE_ITEM_TYPE_OPTIONS } from '@/config/
 import type { KnowledgeItem, KnowledgeItemType, KnowledgeSearchResult } from '@/types'
 
 export function KnowledgeBase() {
+  const queryClient = useQueryClient()
   const [searchTerm, setSearchTerm] = useState('')
   const [filterDomain, setFilterDomain] = useState('')
   const [filterType, setFilterType] = useState('')
@@ -99,8 +100,10 @@ export function KnowledgeBase() {
       })
     },
     onSuccess: () => {
-      toast.success('Knowledge item added. background indexing started.')
+      toast.success('Knowledge item added and searchable.')
       refetchItems()
+      queryClient.invalidateQueries({ queryKey: ['knowledgeItems'] })
+      queryClient.invalidateQueries({ queryKey: ['knowledgeSearch'] })
       setIsIngestOpen(false)
       // Reset form
       setTitle('')
@@ -122,6 +125,8 @@ export function KnowledgeBase() {
     onSuccess: () => {
       toast.success('Knowledge item deleted.')
       refetchItems()
+      queryClient.invalidateQueries({ queryKey: ['knowledgeItems'] })
+      queryClient.invalidateQueries({ queryKey: ['knowledgeSearch'] })
       if (selectedItem?.id) setSelectedItem(null)
     },
     onError: (err) => {
@@ -159,6 +164,11 @@ export function KnowledgeBase() {
   }
 
   const items = listResponse?.items || []
+  const filteredItems = items.filter((item) => {
+    if (filterType && item.item_type !== filterType) return false
+    if (filterDomain && item.domain !== filterDomain) return false
+    return true
+  })
   const searchResults = searchResponse || []
   const hasSearch = searchTerm.trim().length > 0
 
@@ -347,22 +357,28 @@ export function KnowledgeBase() {
                 </div>
               ) : (
                 <div>
-                  <h3 style={{ marginBottom: '1rem' }}>Ingested Documents ({items.length})</h3>
-                  {items.length === 0 ? (
+                  <h3 style={{ marginBottom: '1rem' }}>Ingested Documents ({filteredItems.length})</h3>
+                  {filteredItems.length === 0 ? (
                     <div className="card text-center" style={{ padding: '4rem' }}>
                       <Database size={48} color="var(--color-text-muted)" style={{ margin: '0 auto 1rem auto' }} />
-                      <h4 style={{ marginBottom: '0.5rem' }}>Knowledge Base is Empty</h4>
+                      <h4 style={{ marginBottom: '0.5rem' }}>
+                        {items.length === 0 ? 'Knowledge Base is Empty' : 'No Documents Match These Filters'}
+                      </h4>
                       <p style={{ color: 'var(--color-text-secondary)', marginBottom: '1.5rem', maxWidth: '400px', margin: '0 auto 1.5rem auto' }}>
-                        Seed past project sheets, design architectures, or guidelines so ProposalPilot can write accurate responses.
+                        {items.length === 0
+                          ? 'Seed past project sheets, design architectures, or guidelines so ProposalPilot can write accurate responses.'
+                          : 'Clear or adjust the type and domain filters to see more knowledge items.'}
                       </p>
-                      <button className="btn btn-secondary" onClick={() => setIsIngestOpen(true)}>
-                        <Plus size={16} />
-                        Add First Document
-                      </button>
+                      {items.length === 0 ? (
+                        <button className="btn btn-secondary" onClick={() => setIsIngestOpen(true)}>
+                          <Plus size={16} />
+                          Add First Document
+                        </button>
+                      ) : null}
                     </div>
                   ) : (
                     <div className="flex flex-col gap-3">
-                      {items.map((item: KnowledgeItem) => (
+                      {filteredItems.map((item: KnowledgeItem) => (
                         <div
                           key={item.id}
                           className={`card fade-in ${selectedItem?.id === item.id ? 'agent-active' : ''}`}

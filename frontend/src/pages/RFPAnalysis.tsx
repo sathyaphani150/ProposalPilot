@@ -10,16 +10,22 @@ import {
   CircuitBoard,
   Database,
   FileText,
+  GitBranch,
   HelpCircle,
+  LockKeyhole,
   MessageSquare,
+  MonitorCog,
+  Network,
   RefreshCw,
   ShieldAlert,
   Swords,
   Target,
+  UserRound,
 } from 'lucide-react'
 import { rfpApi } from '@/api/endpoints'
 import { getErrorMessage } from '@/api/client'
 import type {
+  ArchitectureDiagramNode,
   EvidenceItem,
   MustAskQuestion,
   RFPAnalysis as RFPAnalysisType,
@@ -120,13 +126,35 @@ function fallbackIntelligence(analysis: RFPAnalysisType): RFPIntelligence {
     },
     relevant_knowledge_evidence: [],
     architecture: {
-      summary: 'Use a modular architecture based on confirmed RFP scope, integrations, data, security, and operating requirements.',
-      components: ['Client channels / user interface', 'Application workflow services', 'Data layer', 'Integration/API adapter layer', 'Security and audit logging', 'Monitoring and operations'],
-      assumptions: ['Final design depends on confirmed source systems, hosting model, security controls, and acceptance criteria.'],
+      summary: 'Deploy the solution around the RFP scope that has been confirmed, with clear ownership for users, data, integrations, controls, environments, and acceptance evidence.',
       business_view: ['Confirm the operating outcome, owner, success metric, and acceptance authority before finalizing the design.'],
       technical_view: ['Separate user experience, workflow services, integration adapters, data responsibilities, controls, and observability.'],
       decision_points: ['Validate integration readiness, data ownership, control evidence, release scope, and support responsibilities before pricing.'],
       call_prep_questions: ['Which owner can confirm the success metric, source systems, security gates, and acceptance evidence?'],
+      diagram: {
+        title: 'Deployment readiness view for modular RFP delivery',
+        notation: 'Deployment flow / C4 container model',
+        view: 'Deployment readiness',
+        nodes: [
+          { id: 'executiveSponsor', label: 'Executive sponsor / business owner', kind: 'person', group: 'Stakeholders', description: 'Owns business outcomes, acceptance authority, and trade-offs.' },
+          { id: 'clientUsers', label: 'Client users and operators', kind: 'person', group: 'Stakeholders', description: 'Use the release-one workflows and provide acceptance feedback.' },
+          { id: 'experience', label: 'Client channels / user interface', kind: 'container', group: 'Channels', description: 'Presents intake, review, dashboards, and operational screens.', technology: 'Web/mobile application' },
+          { id: 'workflow', label: 'Application workflow services', kind: 'container', group: 'Solution Core', description: 'Coordinates workflow state, business rules, and acceptance evidence.', technology: 'Application services' },
+          { id: 'integrationAdapters', label: 'Integration/API adapter layer', kind: 'container', group: 'Data & Integrations', description: 'Keeps external interfaces behind contracts, owners, and release gates.', technology: 'API / batch adapters' },
+          { id: 'dataStore', label: 'Data layer', kind: 'container', group: 'Data & Integrations', description: 'Stores records, reporting data, audit evidence, and migration outputs.', technology: 'Governed data store' },
+          { id: 'controlPlane', label: 'Security and audit logging', kind: 'container', group: 'Controls & Operations', description: 'Handles access, audit, encryption, and approval evidence.', technology: 'Security controls' },
+          { id: 'observability', label: 'Monitoring and operations', kind: 'container', group: 'Controls & Operations', description: 'Tracks health, failures, support readiness, and release status.', technology: 'Monitoring and support' },
+        ],
+        edges: [
+          { from: 'executiveSponsor', to: 'experience', label: 'sets outcomes and acceptance criteria' },
+          { from: 'clientUsers', to: 'experience', label: 'use release-one workflows' },
+          { from: 'experience', to: 'workflow', label: 'submits work, decisions, and evidence' },
+          { from: 'workflow', to: 'integrationAdapters', label: 'requests confirmed client interfaces' },
+          { from: 'workflow', to: 'dataStore', label: 'reads, validates, writes, and reports data' },
+          { from: 'workflow', to: 'controlPlane', label: 'enforces access, audit, and sign-off gates' },
+          { from: 'workflow', to: 'observability', label: 'emits health, defects, and support signals' },
+        ],
+      },
     },
   }
 }
@@ -138,7 +166,11 @@ function hasUsableIntelligence(value?: RFPIntelligence) {
     value?.must_ask_questions?.length ||
     value?.top_risks?.length ||
     value?.talking_points?.length ||
-    value?.architecture?.components?.length
+    value?.architecture?.summary ||
+    value?.architecture?.diagram?.nodes?.length ||
+    value?.architecture?.business_view?.length ||
+    value?.architecture?.technical_view?.length ||
+    value?.architecture?.security_operations?.length
   )
 }
 
@@ -255,42 +287,6 @@ function EvidenceCards({ evidence }: { evidence?: EvidenceItem[] }) {
   )
 }
 
-function ArchitectureFlow({ architecture }: { architecture?: RFPIntelligence['architecture'] }) {
-  const nodes = (architecture?.components || []).filter(Boolean).slice(0, 10)
-  if (!nodes.length) return null
-  return (
-    <div>
-      <h4 className="section-title" style={{ marginTop: 0 }}>
-        <CircuitBoard size={18} />
-        Architecture Flow
-      </h4>
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.55rem' }}>
-        {nodes.map((node, index) => (
-          <div key={`${node}-${index}`} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
-            <div
-              style={{
-                width: 'min(100%, 760px)',
-                border: '1px solid var(--color-border)',
-                borderRadius: 'var(--radius-md)',
-                background: 'rgba(96, 165, 250, 0.08)',
-                padding: '0.85rem 1rem',
-                textAlign: 'center',
-                fontWeight: 700,
-                color: 'var(--color-text-primary)',
-              }}
-            >
-              {node}
-            </div>
-            {index < nodes.length - 1 ? (
-              <div style={{ color: 'var(--color-primary-light)', fontSize: '1.4rem', lineHeight: 1.15, padding: '0.15rem 0' }}>&darr;</div>
-            ) : null}
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 function SentimentPointCards({ points }: { points?: NonNullable<RFPIntelligence['sentiment_analysis']>['points'] }) {
   if (!points?.length) return <p className="readable-text">No point-wise sentiment analysis was generated.</p>
   return (
@@ -315,52 +311,321 @@ function SentimentPointCards({ points }: { points?: NonNullable<RFPIntelligence[
   )
 }
 
-function ArchitectureView({ architecture }: { architecture?: RFPIntelligence['architecture'] }) {
+const architectureGroupOrder = [
+  'Stakeholders',
+  'Current State',
+  'Channels',
+  'Search Channels',
+  'Mobile Channels',
+  'Solution Core',
+  'NLP & Search Core',
+  'Content & Engagement Core',
+  'Migration Core',
+  'Target Runtime',
+  'Testing & Release',
+  'Data & Integrations',
+  'Enterprise Integrations',
+  'Authority Integrations',
+  'Marketplace Integrations',
+  'Data Management',
+  'Data & Reporting',
+  'Data & Model Evidence',
+  'Data & Compliance',
+  'Insights & Reporting',
+  'Controls & Operations',
+]
+
+function ArchitectureNodeIcon({ node }: { node: ArchitectureDiagramNode }) {
+  const kind = (node.kind || '').toLowerCase()
+  const group = (node.group || '').toLowerCase()
+  if (kind.includes('person')) return <UserRound size={17} />
+  if (group.includes('integration')) return <Network size={17} />
+  if (node.id.toLowerCase().includes('data') || group.includes('data')) return <Database size={17} />
+  if (group.includes('control')) return <LockKeyhole size={17} />
+  if (node.id.toLowerCase().includes('observability') || group.includes('operation')) return <MonitorCog size={17} />
+  return <GitBranch size={17} />
+}
+
+function ArchitectureDiagramView({ architecture }: { architecture: NonNullable<RFPIntelligence['architecture']> }) {
+  const diagram = architecture.diagram
+  const nodes = diagram?.nodes || []
+  const edges = diagram?.edges || []
+  if (!nodes.length) return null
+
+  const nodeById = new Map(nodes.map((node) => [node.id, node]))
+  const nodeLabels = new Map(nodes.map((node) => [node.id, node.label]))
+  const fallbackLanes = [
+    ...architectureGroupOrder.filter((group) => nodes.some((node) => node.group === group)),
+    ...Array.from(new Set(nodes.map((node) => node.group).filter(Boolean))).filter(
+      (group) => !architectureGroupOrder.includes(group),
+    ),
+  ].map((group) => ({
+    id: group.replace(/[^a-z0-9]+/gi, '-').toLowerCase(),
+    title: group,
+    description: '',
+    node_ids: nodes.filter((node) => node.group === group).map((node) => node.id),
+  }))
+  const lanes = (diagram?.lanes?.length ? diagram.lanes : fallbackLanes)
+    .map((lane) => ({
+      ...lane,
+      node_ids: (lane.node_ids || []).filter((nodeId) => nodeById.has(nodeId)),
+    }))
+    .filter((lane) => lane.node_ids.length)
+  const visibleEdges = (diagram?.primary_flow?.length ? diagram.primary_flow : edges).filter(
+    (edge) => nodeById.has(edge.from) && nodeById.has(edge.to),
+  )
+  const summaryItems = diagram?.executive_summary?.length
+    ? diagram.executive_summary
+    : [
+        'Read left to right: users, deployed capability, data and integrations, then release controls.',
+        'Each connection shows what must be confirmed before proposal scope, pricing, and go-live approval.',
+      ]
+
+  return (
+    <div className="architecture-diagram">
+      <div className="architecture-diagram-header">
+        <div>
+          <h4>{diagram?.title || 'Deployment readiness view'}</h4>
+          <p>{diagram?.notation || 'Deployment flow / C4 container model'}{diagram?.view ? ` - ${diagram.view}` : ''}</p>
+        </div>
+      </div>
+
+      <div className="architecture-executive-strip">
+        {summaryItems.map((item, index) => (
+          <div className="architecture-executive-item" key={`${item}-${index}`}>
+            <span>{index + 1}</span>
+            <p>{item}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="architecture-map">
+        {lanes.map((lane, index) => (
+          <section className="architecture-lane" key={lane.id}>
+            <div className="architecture-lane-header">
+              <h5>{lane.title}</h5>
+              {lane.description ? <p>{lane.description}</p> : null}
+            </div>
+            <div className="architecture-node-stack">
+              {lane.node_ids.map((nodeId) => {
+                const node = nodeById.get(nodeId)
+                if (!node) return null
+                return (
+                  <div className={`architecture-node architecture-node-${(node.kind || 'container').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`} key={node.id}>
+                    <div className="architecture-node-title">
+                      <ArchitectureNodeIcon node={node} />
+                      <span>{node.label}</span>
+                    </div>
+                    {node.description ? <p>{node.description}</p> : null}
+                    <div className="architecture-node-footer">
+                      <span>{node.group}</span>
+                      {node.technology ? <strong>{node.technology}</strong> : null}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+            {index < lanes.length - 1 ? <div className="architecture-lane-arrow" aria-hidden="true" /> : null}
+          </section>
+        ))}
+      </div>
+
+      {visibleEdges.length ? (
+        <div className="architecture-path">
+          <div className="architecture-path-header">
+            <h5>Deployment Flow</h5>
+            <p>Every arrow is an implementation or governance dependency to confirm for this RFP.</p>
+          </div>
+          {visibleEdges.map((edge, index) => (
+            <div className="architecture-path-step" key={`${edge.from}-${edge.to}-${index}`}>
+              <span className="architecture-flow-index">{index + 1}</span>
+              <span>{nodeLabels.get(edge.from) || edge.from}</span>
+              <strong>{edge.label}</strong>
+              <span>{nodeLabels.get(edge.to) || edge.to}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function firstMatchingLabel(values: string[], keywords: string[], fallback: string) {
+  const match = values.find((value) => keywords.some((keyword) => value.toLowerCase().includes(keyword)))
+  return match || fallback
+}
+
+function withArchitectureFallbackDiagram(
+  architecture: NonNullable<RFPIntelligence['architecture']>,
+  analysis?: RFPAnalysisType,
+) {
+  if (architecture.diagram?.nodes?.length) return architecture
+  const values = [
+    ...(analysis?.functional_requirements || []),
+    ...(analysis?.integration_needs || []),
+    ...(analysis?.data_needs || []),
+    ...(analysis?.non_functional_requirements || []),
+    ...(analysis?.compliance_needs || []),
+    ...(analysis?.scope_boundaries || []),
+    ...(analysis?.domain_tags || []),
+    analysis?.business_problem || '',
+  ].map(cleanDisplayText).filter(Boolean)
+  const text = values.join(' ').toLowerCase()
+  const isSearch = ['search', 'query', 'solr', 'nlp', 'lemmatization', 'stemming', 'tokenization', 'relevance'].some((term) => text.includes(term))
+  const isMigration = ['aws', 'migration', 'dedicated host', 'test environment', 'upgrade process', 'release process'].some((term) => text.includes(term))
+  const isMobile = ['mobile', 'push notification', 'learning module', 'quiz', 'multilingual'].some((term) => text.includes(term))
+  const isWorkflow = ['workflow', 'approval', 'case', 'routing', 'review'].some((term) => text.includes(term))
+
+  if (isSearch) {
+    return {
+      ...architecture,
+      diagram: {
+        title: 'Search and NLP deployment view',
+        notation: 'Deployment flow / C4 container model',
+        view: 'Deployment readiness',
+        nodes: [
+          { id: 'executiveSponsor', label: 'Executive sponsor / business owner', kind: 'person', group: 'Stakeholders', description: 'Owns search-quality outcomes and acceptance thresholds.' },
+          { id: 'clientUsers', label: 'Marketplace search users and catalog teams', kind: 'person', group: 'Stakeholders', description: 'Submit queries, review relevance, and validate catalog/category outcomes.' },
+          { id: 'searchExperience', label: firstMatchingLabel(values, ['search', 'query'], 'Marketplace search experience'), kind: 'container', group: 'Search Channels', description: 'Captures search terms and returns ranked results.', technology: 'Search UI / API' },
+          { id: 'queryUnderstanding', label: firstMatchingLabel(values, ['string', 'query intent', 'stemming', 'lemmatization', 'tokenization'], 'Query understanding and normalization service'), kind: 'container', group: 'NLP & Search Core', description: 'Normalizes queries and derives intent signals.', technology: 'NLP pipeline' },
+          { id: 'categoryClassifier', label: firstMatchingLabel(values, ['category', 'classification', 'catalog'], 'Catalog category classification service'), kind: 'container', group: 'NLP & Search Core', description: 'Classifies category intent and supports seller/product suggestions.', technology: 'ML classification' },
+          { id: 'solrSearch', label: firstMatchingLabel(values, ['solr'], 'Existing Apache Solr search platform'), kind: 'external_system', group: 'Marketplace Integrations', description: 'Existing search platform that must remain operational during integration.' },
+          { id: 'modelEvidence', label: firstMatchingLabel(values, ['training', 'validation', 'metric'], 'Training and relevance evaluation store'), kind: 'container', group: 'Data & Model Evidence', description: 'Stores validation data, relevance metrics, and error-review evidence.', technology: 'Evaluation data store' },
+          { id: 'searchMonitoring', label: 'Search quality monitoring', kind: 'container', group: 'Controls & Operations', description: 'Tracks relevance, query failures, drift, and tuning triggers.', technology: 'Search observability' },
+        ],
+        edges: [
+          { from: 'clientUsers', to: 'searchExperience', label: 'submit marketplace queries' },
+          { from: 'searchExperience', to: 'queryUnderstanding', label: 'sends raw search terms' },
+          { from: 'queryUnderstanding', to: 'categoryClassifier', label: 'derives catalog intent' },
+          { from: 'queryUnderstanding', to: 'solrSearch', label: 'executes normalized retrieval' },
+          { from: 'modelEvidence', to: 'categoryClassifier', label: 'provides validation evidence' },
+          { from: 'queryUnderstanding', to: 'searchMonitoring', label: 'emits relevance and failure metrics' },
+        ],
+      },
+    } satisfies NonNullable<RFPIntelligence['architecture']>
+  }
+
+  if (isMigration) {
+    return {
+      ...architecture,
+      diagram: {
+        title: 'Cloud migration deployment view',
+        notation: 'Deployment flow / C4 container model',
+        view: 'Deployment readiness',
+        nodes: [
+          { id: 'executiveSponsor', label: 'Executive sponsor / business owner', kind: 'person', group: 'Stakeholders', description: 'Owns migration risk posture and production acceptance.' },
+          { id: 'clientUsers', label: 'Application users, testers, and release owners', kind: 'person', group: 'Stakeholders', description: 'Validate migrated behavior, UAT evidence, and release readiness.' },
+          { id: 'currentApplication', label: firstMatchingLabel(values, ['etrm', 'application'], 'Current application baseline'), kind: 'external_system', group: 'Current State', description: 'Existing application and environment to reproduce or migrate.' },
+          { id: 'migrationRunbook', label: 'Migration and cutover runbook', kind: 'container', group: 'Migration Core', description: 'Coordinates migration steps, rollback criteria, and acceptance evidence.', technology: 'Migration workstream' },
+          { id: 'targetRuntime', label: firstMatchingLabel(values, ['aws', 'dedicated host'], 'Target cloud runtime'), kind: 'container', group: 'Target Runtime', description: 'Hosts the migrated application in the approved target environment.', technology: 'Cloud host' },
+          { id: 'testEnvironment', label: firstMatchingLabel(values, ['test environment', 'uat', 'validation'], 'Test and validation environment'), kind: 'container', group: 'Testing & Release', description: 'Runs regression, UAT, defect triage, and sign-off evidence.', technology: 'Test environment' },
+          { id: 'releaseProcess', label: firstMatchingLabel(values, ['upgrade', 'release'], 'Formal release and upgrade process'), kind: 'container', group: 'Testing & Release', description: 'Controls promotion, rollback, and future version releases.', technology: 'Release governance' },
+          { id: 'securityReview', label: firstMatchingLabel(values, ['security', 'confidential', 'cpra'], 'Security and confidentiality review'), kind: 'container', group: 'Controls & Operations', description: 'Confirms evidence, access controls, remediation, and go-live approval.', technology: 'Security compliance' },
+        ],
+        edges: [
+          { from: 'currentApplication', to: 'migrationRunbook', label: 'provides source baseline' },
+          { from: 'migrationRunbook', to: 'targetRuntime', label: 'rehosts and validates runtime' },
+          { from: 'targetRuntime', to: 'testEnvironment', label: 'is tested before go-live' },
+          { from: 'testEnvironment', to: 'releaseProcess', label: 'feeds release evidence' },
+          { from: 'securityReview', to: 'targetRuntime', label: 'gates production readiness' },
+        ],
+      },
+    } satisfies NonNullable<RFPIntelligence['architecture']>
+  }
+
+  if (isMobile) {
+    return {
+      ...architecture,
+      diagram: {
+        title: 'Mobile application deployment view',
+        notation: 'Deployment flow / C4 container model',
+        view: 'Deployment readiness',
+        nodes: [
+          { id: 'executiveSponsor', label: 'Executive sponsor / business owner', kind: 'person', group: 'Stakeholders', description: 'Owns adoption outcomes and release acceptance.' },
+          { id: 'clientUsers', label: 'Mobile users and content teams', kind: 'person', group: 'Stakeholders', description: 'Use app content and validate published experiences.' },
+          { id: 'mobileApp', label: firstMatchingLabel(values, ['mobile'], 'Mobile application'), kind: 'container', group: 'Mobile Channels', description: 'Delivers mobile journeys, content, feedback, and notifications.', technology: 'Mobile app' },
+          { id: 'contentAdmin', label: firstMatchingLabel(values, ['content', 'back-office', 'learning', 'quiz'], 'Back-office content management module'), kind: 'container', group: 'Content & Engagement Core', description: 'Manages content, events, quizzes, publishing, and administration.', technology: 'CMS / admin module' },
+          { id: 'authorityApis', label: firstMatchingLabel(values, ['api', 'statistical'], 'Client-provided mobile/statistical APIs'), kind: 'external_system', group: 'Authority Integrations', description: 'Confirmed client APIs for credentials, payloads, cadence, and test access.' },
+          { id: 'reporting', label: firstMatchingLabel(values, ['dashboard', 'report'], 'Initiative dashboards and reporting'), kind: 'container', group: 'Data & Reporting', description: 'Publishes initiative dashboards and management reports.', technology: 'Analytics/reporting' },
+          { id: 'securityAudit', label: firstMatchingLabel(values, ['security', 'audit', 'uat'], 'Security audit and acceptance closure'), kind: 'container', group: 'Controls & Operations', description: 'Tracks audit findings, remediation evidence, UAT closure, and go-live approval.', technology: 'Security/UAT gate' },
+        ],
+        edges: [
+          { from: 'clientUsers', to: 'mobileApp', label: 'consume content and submit feedback' },
+          { from: 'contentAdmin', to: 'mobileApp', label: 'publishes approved content' },
+          { from: 'mobileApp', to: 'authorityApis', label: 'requests client data' },
+          { from: 'authorityApis', to: 'reporting', label: 'feeds dashboards' },
+          { from: 'securityAudit', to: 'mobileApp', label: 'gates release readiness' },
+        ],
+      },
+    } satisfies NonNullable<RFPIntelligence['architecture']>
+  }
+
+  return {
+    ...architecture,
+    diagram: {
+      title: isWorkflow ? 'Workflow platform deployment view' : 'Application deployment view',
+      notation: 'Deployment flow / C4 container model',
+      view: 'Deployment readiness',
+      nodes: [
+        { id: 'executiveSponsor', label: 'Executive sponsor / business owner', kind: 'person', group: 'Stakeholders', description: 'Owns business outcomes, acceptance authority, and delivery trade-offs.' },
+        { id: 'clientUsers', label: 'Client users and operators', kind: 'person', group: 'Stakeholders', description: 'Use the delivered capability and provide release-one feedback.' },
+        { id: 'experience', label: firstMatchingLabel(values, ['portal', 'dashboard', 'application', 'workflow'], 'Client experience'), kind: 'container', group: 'Channels', description: 'Primary user-facing channel or workflow surface.', technology: 'Application UI' },
+        { id: 'workflow', label: firstMatchingLabel(values, ['workflow', 'approval', 'routing', 'review'], architecture.summary || 'Application workflow services'), kind: 'container', group: 'Solution Core', description: 'Coordinates workflow state, business rules, and acceptance evidence.', technology: 'Application services' },
+        { id: 'integrationAdapters', label: firstMatchingLabel(values, ['api', 'integration', 'identity', 'finance', 'repository'], 'Enterprise integration adapters'), kind: 'container', group: 'Data & Integrations', description: 'Separates client-owned systems behind explicit interface contracts.', technology: 'API / batch adapters' },
+        { id: 'dataStore', label: firstMatchingLabel(values, ['data', 'record', 'report', 'database'], 'Governed data store'), kind: 'container', group: 'Data & Integrations', description: 'Stores operational records, migrated data, reports, and audit evidence.', technology: 'Data store' },
+        { id: 'controlPlane', label: firstMatchingLabel(values, ['security', 'audit', 'access', 'compliance'], 'Security and audit controls'), kind: 'container', group: 'Controls & Operations', description: 'Handles access, audit, security evidence, and approval gates.', technology: 'Security controls' },
+        { id: 'observability', label: firstMatchingLabel(values, ['monitoring', 'support', 'maintenance'], 'Monitoring and support operations'), kind: 'container', group: 'Controls & Operations', description: 'Tracks workflow health, integration failures, support readiness, and release status.', technology: 'Monitoring and support' },
+      ],
+      edges: [
+        { from: 'executiveSponsor', to: 'experience', label: 'sets outcomes and acceptance criteria' },
+        { from: 'clientUsers', to: 'experience', label: 'use release-one workflows' },
+        { from: 'experience', to: 'workflow', label: 'submits work, decisions, and evidence' },
+        { from: 'workflow', to: 'integrationAdapters', label: 'requests confirmed client interfaces' },
+        { from: 'workflow', to: 'dataStore', label: 'reads, validates, writes, and reports data' },
+        { from: 'workflow', to: 'controlPlane', label: 'enforces access, audit, and sign-off gates' },
+        { from: 'workflow', to: 'observability', label: 'emits health, defects, and support signals' },
+      ],
+    },
+  } satisfies NonNullable<RFPIntelligence['architecture']>
+}
+
+function ArchitectureView({ architecture, analysis }: { architecture?: RFPIntelligence['architecture']; analysis?: RFPAnalysisType }) {
   if (!architecture) return <p className="readable-text">No architecture recommendation was generated.</p>
+  const displayArchitecture = withArchitectureFallbackDiagram(architecture, analysis)
   const hasDetails = Boolean(
-    architecture.business_view?.length ||
-    architecture.technical_view?.length ||
-    architecture.data_flow?.length ||
-    architecture.integration_flow?.length ||
-    architecture.security_operations?.length ||
-    architecture.decision_points?.length ||
-    architecture.call_prep_questions?.length
+    displayArchitecture.business_view?.length ||
+    displayArchitecture.technical_view?.length ||
+    displayArchitecture.data_flow?.length ||
+    displayArchitecture.integration_flow?.length ||
+    displayArchitecture.security_operations?.length ||
+    displayArchitecture.decision_points?.length ||
+    displayArchitecture.call_prep_questions?.length
   )
   return (
     <div className="content-stack">
-      {architecture.summary ? <p className="readable-text">{architecture.summary}</p> : null}
-      <ArchitectureFlow architecture={architecture} />
+      {displayArchitecture.summary ? <p className="readable-text">{displayArchitecture.summary}</p> : null}
+      <ArchitectureDiagramView architecture={displayArchitecture} />
+      {displayArchitecture.structurizr_dsl ? (
+        <details className="architecture-dsl">
+          <summary>Structurizr DSL</summary>
+          <pre>{displayArchitecture.structurizr_dsl}</pre>
+        </details>
+      ) : null}
       {hasDetails ? (
         <>
-          <ArchitectureSubsection title="Business View" items={architecture.business_view} empty="No business architecture view generated." />
-          <ArchitectureSubsection title="Technical Blueprint" items={architecture.technical_view} empty="No technical blueprint generated." />
+          <ArchitectureSubsection title="Business View" items={displayArchitecture.business_view} empty="No business architecture view generated." />
+          <ArchitectureSubsection title="Technical Blueprint" items={displayArchitecture.technical_view} empty="No technical blueprint generated." />
           <div className="prep-two-column">
-            <ArchitectureSubsection title="Data Flow" items={architecture.data_flow} empty="No data flow generated." />
-            <ArchitectureSubsection title="Integration Flow" items={architecture.integration_flow} empty="No integration flow generated." />
+            <ArchitectureSubsection title="Data Flow" items={displayArchitecture.data_flow} empty="No data flow generated." />
+            <ArchitectureSubsection title="Integration Flow" items={displayArchitecture.integration_flow} empty="No integration flow generated." />
           </div>
-          <ArchitectureSubsection title="Security and Operations" items={architecture.security_operations} empty="No security or operations detail generated." />
+          <ArchitectureSubsection title="Security and Operations" items={displayArchitecture.security_operations} empty="No security or operations detail generated." />
           <div className="prep-two-column">
-            <ArchitectureSubsection title="Decision Points" items={architecture.decision_points} empty="No design decisions generated." />
-            <ArchitectureSubsection title="Call Prep Questions" items={architecture.call_prep_questions} empty="No architecture call questions generated." />
+            <ArchitectureSubsection title="Decision Points" items={displayArchitecture.decision_points} empty="No design decisions generated." />
+            <ArchitectureSubsection title="Call Prep Questions" items={displayArchitecture.call_prep_questions} empty="No architecture call questions generated." />
           </div>
         </>
       ) : null}
-      <div className="prep-two-column">
-        <div>
-          <h4 className="section-title">
-            <Database size={18} />
-            Components
-          </h4>
-          <TextList items={architecture.components} empty="No components generated." />
-        </div>
-        <div>
-          <h4 className="section-title">
-            <HelpCircle size={18} />
-            Assumptions
-          </h4>
-          <TextList items={architecture.assumptions} empty="No assumptions generated." />
-        </div>
-      </div>
     </div>
   )
 }
@@ -631,7 +896,7 @@ export function RFPAnalysis() {
 
           {activeTab === 'Architecture' ? (
             <SectionCard title="Architecture" icon={<CircuitBoard size={20} />}>
-              <ArchitectureView architecture={intelligence.architecture} />
+              <ArchitectureView architecture={intelligence.architecture} analysis={analysis} />
             </SectionCard>
           ) : null}
         </div>

@@ -77,7 +77,7 @@ async def parse_document(file_path: str | Path) -> str:
 def _parse_pdf(path: Path) -> str:
     """Extract text from PDF using PyMuPDF."""
     try:
-        import fitz  # PyMuPDF
+        import fitz  # type: ignore[import-untyped]  # PyMuPDF
     except ImportError:
         raise DocumentParsingError(
             "PyMuPDF is not installed. Run: pip install pymupdf"

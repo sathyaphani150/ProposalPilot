@@ -9,6 +9,7 @@ import asyncio
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Sequence
 
 import aiofiles
 from loguru import logger
@@ -41,8 +42,8 @@ _GENERIC_REGRESSION_TAGS = {
 
 def _analysis_needs_recovery(
     raw_llm_output: dict[str, object] | None,
-    missing_information: list[object] | None,
-    domain_tags: list[str] | None,
+    missing_information: Sequence[object] | None,
+    domain_tags: Sequence[str] | None,
     raw_text: str | None,
 ) -> bool:
     raw = raw_llm_output or {}
@@ -51,6 +52,9 @@ def _analysis_needs_recovery(
     if not isinstance(intelligence, dict) or not intelligence:
         return True
     if not intelligence.get("sentiment_analysis") or not intelligence.get("must_ask_questions"):
+        return True
+    architecture = intelligence.get("architecture")
+    if not isinstance(architecture, dict) or not architecture.get("diagram"):
         return True
     if raw_text and len(raw_text) >= 1_000 and not missing_information:
         return True

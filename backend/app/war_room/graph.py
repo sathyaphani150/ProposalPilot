@@ -1,13 +1,17 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, Protocol, cast
 
+GRAPH_END: Any
+LangGraphStateGraph: Any
 try:
-    from langgraph.graph import END, StateGraph
+    from langgraph.graph import END as _GRAPH_END, StateGraph as _LangGraphStateGraph
+    GRAPH_END = _GRAPH_END
+    LangGraphStateGraph = _LangGraphStateGraph
     _LANGGRAPH_AVAILABLE = True
 except Exception:  # pragma: no cover - fallback for version skew in local envs
-    END = "END"  # type: ignore[assignment]
-    StateGraph = None  # type: ignore[assignment]
+    GRAPH_END = "END"
+    LangGraphStateGraph = None
     _LANGGRAPH_AVAILABLE = False
 
 from app.war_room.agents import (
@@ -21,7 +25,16 @@ from app.war_room.state import ProposalState
 from app.war_room.supervisor import validate_war_room_outputs
 
 
-async def _discussion_node(state: ProposalState) -> dict[str, Any]:
+class _WarRoomGraph(Protocol):
+    async def ainvoke(self, state: ProposalState) -> ProposalState:
+        ...
+
+
+def _copy_state(state: ProposalState) -> dict[str, Any]:
+    return dict(cast(dict[str, Any], state))
+
+
+async def _discussion_node(state: dict[str, Any]) -> dict[str, Any]:
     messages, conflicts = build_discussion_round(state)
     discussion_log = list(state.get("discussion_log") or [])
     discussion_log.extend(messages)
@@ -33,7 +46,7 @@ async def _discussion_node(state: ProposalState) -> dict[str, Any]:
     }
 
 
-async def _supervisor_node(state: ProposalState) -> dict[str, Any]:
+async def _supervisor_node(state: dict[str, Any]) -> dict[str, Any]:
     final_recommendations = validate_war_room_outputs(state)
     review_loops = int(state.get("review_loops") or 0)
     if final_recommendations.get("should_loop"):
@@ -48,7 +61,7 @@ async def _supervisor_node(state: ProposalState) -> dict[str, Any]:
     }
 
 
-def _route_after_supervisor(state: ProposalState) -> Literal["loop", "end"]:
+def _route_after_supervisor(state: dict[str, Any]) -> Literal["loop", "end"]:
     if state.get("final_recommendations", {}).get("should_loop"):
         return "loop"
     return "end"
@@ -58,7 +71,8 @@ def build_war_room_graph():
     if not _LANGGRAPH_AVAILABLE:
         return _FallbackWarRoomGraph()
 
-    graph = StateGraph(ProposalState)
+    assert LangGraphStateGraph is not None
+    graph = LangGraphStateGraph(ProposalState)
     graph.add_node("architect", run_architect_agent)
     graph.add_node("cfo", run_cfo_agent)
     graph.add_node("competitor", run_competitor_agent)
@@ -75,7 +89,7 @@ def build_war_room_graph():
     graph.add_conditional_edges(
         "supervisor",
         _route_after_supervisor,
-        {"loop": "architect", "end": END},
+        {"loop": "architect", "end": GRAPH_END},
     )
     return graph.compile()
 
@@ -85,7 +99,7 @@ _compiled_graph = None
 
 class _FallbackWarRoomGraph:
     async def ainvoke(self, state: ProposalState) -> ProposalState:
-        current_state: ProposalState = dict(state)
+        current_state = _copy_state(state)
         while True:
             architect_update = await run_architect_agent(current_state)
             current_state.update(architect_update)
@@ -106,10 +120,10 @@ class _FallbackWarRoomGraph:
             current_state.update(supervisor_update)
 
             if not current_state.get("final_recommendations", {}).get("should_loop"):
-                return current_state
+                return cast(ProposalState, current_state)
 
     async def astream(self, state: ProposalState, *, config: dict[str, Any] | None = None, stream_mode: str = "updates"):
-        current_state: ProposalState = dict(state)
+        current_state = _copy_state(state)
         while True:
             architect_update = await run_architect_agent(current_state)
             current_state.update(architect_update)
@@ -147,6 +161,6 @@ def get_compiled_graph():
 
 
 async def run_war_room_graph(state: ProposalState) -> ProposalState:
-    graph = get_compiled_graph()
+    graph = cast(_WarRoomGraph, get_compiled_graph())
     result = await graph.ainvoke(state)
-    return result
+    return cast(ProposalState, result)

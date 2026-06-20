@@ -134,6 +134,96 @@ def _sanitize_risks(value: Any) -> list[dict[str, Any]]:
     return risks
 
 
+def _sanitize_architecture_diagram(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+
+    nodes: list[dict[str, str]] = []
+    node_candidate = value.get("nodes")
+    node_source = node_candidate if isinstance(node_candidate, list) else []
+    for item in node_source:
+        if not isinstance(item, dict):
+            continue
+        node_id = _clean_text(item.get("id"), max_chars=80)
+        label = _clean_text(item.get("label"), max_chars=120)
+        if not node_id or not label:
+            continue
+        nodes.append(
+            {
+                "id": node_id,
+                "label": label,
+                "kind": _clean_text(item.get("kind"), max_chars=40),
+                "group": _clean_text(item.get("group"), max_chars=80) or "Architecture",
+                "description": _clean_text(item.get("description"), max_chars=260),
+                "technology": _clean_text(item.get("technology"), max_chars=80),
+            }
+        )
+        if len(nodes) >= 12:
+            break
+
+    node_ids = {node["id"] for node in nodes}
+    edges: list[dict[str, str]] = []
+    edge_candidate = value.get("edges")
+    edge_source = edge_candidate if isinstance(edge_candidate, list) else []
+    for item in edge_source:
+        if not isinstance(item, dict):
+            continue
+        source = _clean_text(item.get("from"), max_chars=80)
+        target = _clean_text(item.get("to"), max_chars=80)
+        label = _clean_text(item.get("label"), max_chars=140)
+        if source in node_ids and target in node_ids and label:
+            edges.append({"from": source, "to": target, "label": label})
+        if len(edges) >= 14:
+            break
+
+    executive_summary = _clean_items(value.get("executive_summary"), limit=4, max_chars=220)
+    lanes: list[dict[str, Any]] = []
+    lane_candidate = value.get("lanes")
+    lane_source = lane_candidate if isinstance(lane_candidate, list) else []
+    for item in lane_source:
+        if not isinstance(item, dict):
+            continue
+        lane_id = _clean_text(item.get("id"), max_chars=80)
+        title = _clean_text(item.get("title"), max_chars=120)
+        if not lane_id or not title:
+            continue
+        raw_node_ids = item.get("node_ids")
+        node_id_source = raw_node_ids if isinstance(raw_node_ids, list) else []
+        lane_node_ids = [
+            node_id
+            for node_id in (_clean_text(candidate, max_chars=80) for candidate in node_id_source)
+            if node_id in node_ids
+        ]
+        if not lane_node_ids:
+            continue
+        raw_groups = item.get("groups")
+        group_source = raw_groups if isinstance(raw_groups, list) else []
+        lanes.append(
+            {
+                "id": lane_id,
+                "title": title,
+                "description": _clean_text(item.get("description"), max_chars=220),
+                "groups": [_clean_text(group, max_chars=80) for group in group_source if _clean_text(group, max_chars=80)][:8],
+                "node_ids": lane_node_ids,
+            }
+        )
+        if len(lanes) >= 6:
+            break
+
+    if not nodes:
+        return {}
+    return {
+        "title": _clean_text(value.get("title"), max_chars=140),
+        "notation": _clean_text(value.get("notation"), max_chars=80),
+        "view": _clean_text(value.get("view"), max_chars=80),
+        "executive_summary": executive_summary,
+        "lanes": lanes,
+        "primary_flow": edges,
+        "nodes": nodes,
+        "edges": edges,
+    }
+
+
 def _sanitize_rfp_intelligence(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -241,8 +331,6 @@ def _sanitize_rfp_intelligence(value: Any) -> dict[str, Any]:
         "relevant_knowledge_evidence": evidence,
         "architecture": {
             "summary": _clean_text(architecture.get("summary"), max_chars=700),
-            "components": _clean_items(architecture.get("components"), limit=14, max_chars=120),
-            "assumptions": _clean_items(architecture.get("assumptions"), limit=8, max_chars=240),
             "business_view": _clean_items(architecture.get("business_view"), limit=6, max_chars=360),
             "technical_view": _clean_items(architecture.get("technical_view"), limit=10, max_chars=360),
             "data_flow": _clean_items(architecture.get("data_flow"), limit=7, max_chars=360),
@@ -250,6 +338,8 @@ def _sanitize_rfp_intelligence(value: Any) -> dict[str, Any]:
             "security_operations": _clean_items(architecture.get("security_operations"), limit=8, max_chars=360),
             "decision_points": _clean_items(architecture.get("decision_points"), limit=7, max_chars=360),
             "call_prep_questions": _clean_items(architecture.get("call_prep_questions"), limit=8, max_chars=280),
+            "diagram": _sanitize_architecture_diagram(architecture.get("diagram")),
+            "structurizr_dsl": _clean_multiline_text(architecture.get("structurizr_dsl"), max_chars=9000),
             "generated_by": _clean_text(architecture.get("generated_by"), max_chars=80),
         },
     }

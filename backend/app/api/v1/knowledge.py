@@ -105,6 +105,7 @@ async def search_knowledge(
     domain: str | None = Query(default=None),
     item_type: str | None = Query(default=None),
     limit: int = Query(default=5, ge=1, le=20),
+    db: AsyncSession = Depends(get_db),
 ) -> list[KnowledgeSearchMatch]:
     """
     Perform hybrid vector search + BM25 keyword matching on ingested documents.
@@ -114,6 +115,7 @@ async def search_knowledge(
         domain=domain,
         item_type=item_type,
         limit=limit,
+        db=db,
     )
     
     matches = []

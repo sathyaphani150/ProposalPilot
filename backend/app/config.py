@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     APP_DEBUG: bool = False
     APP_SECRET_KEY: Optional[str] = Field(None, min_length=32)
-    APP_CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
+    APP_CORS_ORIGINS: List[str] = ["http://localhost:5174", "http://localhost:3000"]
 
     # ── Database ───────────────────────────────────────────────────────
     DATABASE_URL: str = Field(..., pattern=r"^postgresql\+asyncpg://")

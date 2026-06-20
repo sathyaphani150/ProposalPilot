@@ -131,8 +131,6 @@ class RFPNarrativeOutput(BaseModel):
 
 class RFPArchitectureOutput(BaseModel):
     summary: str
-    components: list[str] = Field(default_factory=list)
-    assumptions: list[str] = Field(default_factory=list)
     business_view: list[str] = Field(default_factory=list)
     technical_view: list[str] = Field(default_factory=list)
     data_flow: list[str] = Field(default_factory=list)
@@ -140,6 +138,8 @@ class RFPArchitectureOutput(BaseModel):
     security_operations: list[str] = Field(default_factory=list)
     decision_points: list[str] = Field(default_factory=list)
     call_prep_questions: list[str] = Field(default_factory=list)
+    diagram: dict[str, Any] = Field(default_factory=dict)
+    structurizr_dsl: str = ""
 
 
 class RFPIntelligenceOutput(BaseModel):
@@ -1180,57 +1180,33 @@ def _architecture_recommendation(
     tags: list[str],
     analysis: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    lower = raw_text.lower()
     signals = _analysis_signals(analysis)
     focus = _rfp_focus(analysis, raw_text)
-    components: list[str] = []
-
-    if any(term in lower for term in ("mobile", "app", "portal", "dashboard", "user", "workflow", "screen")):
-        components.append(_short_signal((signals["functional"] or [focus])[0], words=10))
+    named_scope = _dedupe(
+        [
+            _short_signal(item, words=8)
+            for item in [
+                *(signals["functional"][:2]),
+                *(signals["integration"][:1]),
+                *(signals["data"][:1]),
+                *(signals["non_functional"][:1]),
+            ]
+        ]
+    )
+    if named_scope:
+        scope_phrase = "; ".join(named_scope[:4])
+        direction = (
+            f"Deploy {focus} around the RFP's named scope: {scope_phrase}. "
+            "Keep client-owned systems, data ownership, security gates, environments, and acceptance evidence explicit before pricing."
+        )
     else:
-        components.append(focus)
-
-    if signals["functional"]:
-        for item in signals["functional"][:3]:
-            components.append(_short_signal(item, words=10))
-    else:
-        components.append(f"{focus} execution service")
-
-    for item in signals["integration"][:3]:
-        components.append(_short_signal(item, words=10))
-
-    for item in signals["data"][:3]:
-        components.append(_short_signal(item, words=10))
-
-    if any(term in lower for term in ("document", "file", "upload", "pdf", "image", "storage")):
-        components.append(f"{focus} document and file storage")
-    if _has_domain_terms(lower, {"ai", "machine learning", "model", "classification", "prediction", "nlp", "search", "query"}):
-        ai_label = _short_signal((signals["functional"] or signals["data"] or ["AI/NLP processing"])[0], words=8)
-        components.append(f"{ai_label} validation and tuning")
-    if signals["non_functional"] or signals["compliance"] or any(term in lower for term in ("security", "auth", "access control", "privacy", "confidential", "audit")):
-        control_label = _short_signal((signals["non_functional"] or signals["compliance"] or ["Security and audit controls"])[0], words=8)
-        components.append(control_label)
-    if any(term in lower for term in ("notification", "email", "sms", "alert")):
-        components.append(f"{focus} notifications and escalations")
-    if any(term in lower for term in ("cloud", "hosting", "deploy", "availability", "monitoring", "support", "o&m", "maintain")):
-        ops_label = _short_signal((signals["scope"] or signals["non_functional"] or ["hosting, monitoring, and support"])[0], words=8)
-        components.append(ops_label)
-
-    assumptions = [
-        f"Architecture is based on the extracted focus: {focus}.",
-        "Final component boundaries depend on confirmed source systems, environments, security controls, data ownership, and acceptance tests.",
-    ]
-    if signals["integration"]:
-        assumptions.append(f"Integration design assumes client confirmation for: {_short_signal(signals['integration'][0], words=12)}.")
-    if signals["data"]:
-        assumptions.append(f"Data design assumes owner and quality confirmation for: {_short_signal(signals['data'][0], words=12)}.")
-    if signals["non_functional"] or signals["compliance"]:
-        assumptions.append(f"Control design assumes sign-off requirements for: {_short_signal((signals['non_functional'] or signals['compliance'])[0], words=12)}.")
+        direction = (
+            f"Deploy {focus} as a modular, evidence-gated solution. "
+            "Confirm users, source systems, data ownership, controls, environments, and acceptance evidence before final commitment."
+        )
 
     return {
-        "direction": f"Architecture for {focus} should be built around the RFP's named capabilities, confirmed integrations, data ownership, controls, and operating obligations.",
-        "components": _dedupe(components)[:14],
-        "assumptions": _dedupe(assumptions)[:8],
+        "direction": direction,
     }
 
 
@@ -1315,6 +1291,527 @@ def _architecture_detail(raw_text: str, analysis: dict[str, Any]) -> dict[str, A
         "security_operations": security_operations,
         "decision_points": decision_points,
         "call_prep_questions": call_prep_questions,
+    }
+
+
+def _dsl_quote(value: Any, *, max_chars: int = 180) -> str:
+    text = _strip_reference_noise(str(value or "")).replace("\\", "\\\\").replace('"', '\\"')
+    text = re.sub(r"\s+", " ", text).strip()[:max_chars]
+    return f'"{text}"'
+
+
+def _diagram_node(
+    node_id: str,
+    label: str,
+    kind: str,
+    group: str,
+    description: str,
+    *,
+    technology: str = "",
+) -> dict[str, str]:
+    return {
+        "id": node_id,
+        "label": label,
+        "kind": kind,
+        "group": group,
+        "description": description,
+        "technology": technology,
+    }
+
+
+def _diagram_edge(source: str, target: str, label: str) -> dict[str, str]:
+    return {"from": source, "to": target, "label": label}
+
+
+def _diagram_lane(
+    lane_id: str,
+    title: str,
+    description: str,
+    groups: list[str],
+    nodes: list[dict[str, str]],
+) -> dict[str, Any]:
+    node_ids = [node["id"] for node in nodes if node.get("group") in groups]
+    return {
+        "id": lane_id,
+        "title": title,
+        "description": description,
+        "groups": groups,
+        "node_ids": node_ids,
+    }
+
+
+def _architecture_layout(
+    pattern: str,
+    focus: str,
+    nodes: list[dict[str, str]],
+    edges: list[dict[str, str]],
+) -> dict[str, Any]:
+    if pattern == "cloud_migration":
+        lane_defs = [
+            ("starting_point", "1. Current estate", "What exists today and who must approve the move.", ["Stakeholders", "Current State"]),
+            ("migration", "2. Migration workstream", "The controlled runbook that moves the application without losing rollback control.", ["RFP-Specific Scope", "Migration Core"]),
+            ("target", "3. Target runtime", "Where the migrated application, data, and operating environment land.", ["Target Runtime", "Data & Compliance", "Data Governance"]),
+            ("validation", "4. Validation and release", "How testing, security evidence, release governance, and support prove go-live readiness.", ["Testing & Release", "Controls & Operations", "Confirmed Interfaces"]),
+        ]
+        headline = [
+            "Reproduce the current ETRM baseline before changing production behavior.",
+            "Move through a governed migration runbook with rollback and evidence gates.",
+            "Treat AWS runtime, test evidence, data protection, and release governance as one go-live decision.",
+        ]
+    elif pattern == "search_nlp":
+        lane_defs = [
+            ("demand", "1. Search demand", "Who searches, what outcome matters, and where queries enter.", ["Stakeholders", "Search Channels", "RFP-Specific Scope"]),
+            ("intelligence", "2. NLP and relevance core", "How query understanding, classification, ranking, and relevance improvement happen.", ["NLP & Search Core"]),
+            ("platform", "3. Existing marketplace platform", "Where Solr, APIs, and confirmed interfaces remain protected behind integration boundaries.", ["Marketplace Integrations", "Confirmed Interfaces"]),
+            ("evidence", "4. Evidence and operations", "How model quality, data readiness, monitoring, and acceptance controls are proven.", ["Data & Model Evidence", "Data Governance", "Controls & Operations"]),
+        ]
+        headline = [
+            "Keep the existing Solr search estate stable while improving query understanding.",
+            "Separate NLP, category classification, ranking, and marketplace API responsibilities.",
+            "Make relevance metrics and monitoring part of acceptance, not a post-launch afterthought.",
+        ]
+    elif pattern == "mobile_app":
+        lane_defs = [
+            ("audience", "1. Users and channels", "Who uses the application and how value reaches them.", ["Stakeholders", "Mobile Channels", "RFP-Specific Scope"]),
+            ("engagement", "2. Content and engagement core", "How content, events, quizzes, feedback, and notifications are managed.", ["Content & Engagement Core"]),
+            ("data", "3. Authority data and reporting", "How client APIs, application data, dashboards, and reporting connect.", ["Authority Integrations", "Confirmed Interfaces", "Data & Reporting", "Data Governance"]),
+            ("release", "4. Hosting and release controls", "How hosting, testing, security audit closure, and support protect launch readiness.", ["Controls & Operations"]),
+        ]
+        headline = [
+            "Anchor the app around learning journeys, content operations, and measurable adoption.",
+            "Treat authority APIs and dashboards as confirmed contracts with test data and owners.",
+            "Gate hosting through UAT, security audit closure, and support readiness.",
+        ]
+    else:
+        lane_defs = [
+            ("experience", "1. Users and experience", "Who uses the system and which release-one journey proves value.", ["Stakeholders", "Channels", "RFP-Specific Scope"]),
+            ("core", "2. Business capability", "The owned workflow, document, reporting, or domain services in the proposed solution.", ["Solution Core", "Insights & Reporting"]),
+            ("interfaces", "3. Data and integrations", "How client systems, data ownership, and interface contracts are isolated from delivery risk.", ["Enterprise Integrations", "Data & Integrations", "Data Management", "Data Governance", "Confirmed Interfaces"]),
+            ("controls", "4. Controls and operations", "How security, monitoring, support, acceptance, and production readiness are proven.", ["Controls & Operations"]),
+        ]
+        headline = [
+            f"Deploy {focus} as a visible user journey backed by owned business services.",
+            "Keep integrations and data responsibilities explicit so proposal scope stays controllable.",
+            "Tie security, monitoring, and acceptance evidence directly to go-live readiness.",
+        ]
+
+    lanes = [_diagram_lane(lane_id, title, description, groups, nodes) for lane_id, title, description, groups in lane_defs]
+    assigned = {node_id for lane in lanes for node_id in lane["node_ids"]}
+    unassigned = [node["id"] for node in nodes if node["id"] not in assigned]
+    if unassigned:
+        lanes.append(
+            {
+                "id": "supporting",
+                "title": "Supporting components",
+                "description": "Additional RFP-specific components that should remain visible in scope discussions.",
+                "groups": [],
+                "node_ids": unassigned,
+            }
+        )
+    lanes = [lane for lane in lanes if lane["node_ids"]]
+
+    return {
+        "executive_summary": headline,
+        "lanes": lanes,
+        "primary_flow": edges,
+    }
+
+
+def _arch_signal_pool(signals: dict[str, list[str]], analysis: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    for key in ("functional", "integration", "data", "non_functional", "compliance", "scope", "timeline"):
+        values.extend(signals.get(key, []))
+    for key in ("domain_tags", "business_problem"):
+        value = analysis.get(key)
+        if isinstance(value, list):
+            values.extend(str(item) for item in value)
+        elif value:
+            values.append(str(value))
+    return _dedupe([_short_signal(item, words=12, max_chars=130) for item in values])
+
+
+def _arch_label(
+    pool: list[str],
+    keywords: set[str],
+    fallback: str,
+    *,
+    words: int = 8,
+    max_chars: int = 90,
+) -> str:
+    for item in pool:
+        lower = item.lower()
+        if any(_contains_term(lower, keyword) for keyword in keywords):
+            return _short_signal(item, words=words, max_chars=max_chars)
+    return fallback
+
+
+def _architecture_pattern(raw_text: str, analysis: dict[str, Any], signals: dict[str, list[str]]) -> str:
+    lower = raw_text.lower()
+    tags = " ".join(str(item).lower() for item in analysis.get("domain_tags", []))
+    joined = " ".join(_arch_signal_pool(signals, analysis)).lower()
+    evidence = f"{lower} {tags} {joined}"
+    scores = {
+        "search_nlp": 0,
+        "cloud_migration": 0,
+        "mobile_app": 0,
+        "workflow": 0,
+        "analytics": 0,
+        "document": 0,
+        "integration_hub": 0,
+    }
+    if _has_search_nlp_signals(evidence) or any(term in evidence for term in ("solr", "query intent", "search relevance", "stemming", "lemmatization", "tokenization")):
+        scores["search_nlp"] += 6
+    if any(term in evidence for term in ("aws", "dedicated host", "migration", "test environment", "upgrade process", "release process", "cutover")):
+        scores["cloud_migration"] += 5
+    if any(term in evidence for term in ("mobile application", "mobile app", "push notification", "app store", "android", "ios", "multilingual content")):
+        scores["mobile_app"] += 5
+    if any(term in evidence for term in ("workflow", "approval", "case intake", "routing", "review", "case management")):
+        scores["workflow"] += 4
+    if any(term in evidence for term in ("dashboard", "analytics", "reporting", "metrics", "management report", "statistical data")):
+        scores["analytics"] += 3
+    if any(term in evidence for term in ("document upload", "document repository", "file share", "pdf", "records", "evidence retention")):
+        scores["document"] += 3
+    if len(signals.get("integration", [])) >= 2 or any(term in evidence for term in ("api", "web service", "microservice", "batch interface", "third party")):
+        scores["integration_hub"] += 2
+    return max(scores, key=lambda key: scores[key])
+
+
+def _add_node(nodes: list[dict[str, str]], node: dict[str, str]) -> None:
+    if not any(existing["id"] == node["id"] for existing in nodes):
+        nodes.append(node)
+
+
+def _add_edge(edges: list[dict[str, str]], edge: dict[str, str]) -> None:
+    if not any(existing["from"] == edge["from"] and existing["to"] == edge["to"] and existing["label"] == edge["label"] for existing in edges):
+        edges.append(edge)
+
+
+def _structurizr_kind(kind: str) -> str:
+    if kind == "person":
+        return "person"
+    if kind == "external_system":
+        return "softwareSystem"
+    return "container"
+
+
+def _render_structurizr_dsl(focus: str, nodes: list[dict[str, str]], edges: list[dict[str, str]]) -> str:
+    system_description = (
+        f"Proposed solution boundary for {focus}; validate users, integrations, data ownership, controls, hosting, and acceptance criteria before proposal commitment."
+    )
+    dsl_lines = [
+        f"workspace {_dsl_quote(f'ProposalPilot architecture - {focus}', max_chars=100)} {_dsl_quote(system_description, max_chars=220)} {{",
+        "    model {",
+    ]
+    for node in nodes:
+        if node["kind"] == "container":
+            continue
+        dsl_lines.append(
+            f"        {node['id']} = {_structurizr_kind(node['kind'])} {_dsl_quote(node['label'])} {_dsl_quote(node['description'])}"
+        )
+    dsl_lines.append(
+        f"        solution = softwareSystem {_dsl_quote(focus, max_chars=90)} {_dsl_quote(system_description, max_chars=220)} {{"
+    )
+    for node in nodes:
+        if node["kind"] != "container":
+            continue
+        dsl_lines.append(
+            f"            {node['id']} = container {_dsl_quote(node['label'])} {_dsl_quote(node['description'])} {_dsl_quote(node.get('technology') or node['group'])}"
+        )
+    dsl_lines.extend(["        }", ""])
+    for edge in edges:
+        dsl_lines.append(f"        {edge['from']} -> {edge['to']} {_dsl_quote(edge['label'], max_chars=120)}")
+    dsl_lines.extend(
+        [
+            "    }",
+            "    views {",
+            '        systemContext solution "SystemContext" {',
+            "            include *",
+            "            autoLayout lr",
+            f"            title {_dsl_quote(f'System context - {focus}', max_chars=120)}",
+            "        }",
+            '        container solution "Container" {',
+            "            include *",
+            "            autoLayout lr",
+            f"            title {_dsl_quote(f'Container view - {focus}', max_chars=120)}",
+            "        }",
+            "        styles {",
+            '            element "Person" { shape Person background "#0f766e" color "#ffffff" }',
+            '            element "Software System" { background "#2563eb" color "#ffffff" }',
+            '            element "Container" { background "#1f2937" color "#ffffff" }',
+            '            element "External System" { background "#475569" color "#ffffff" }',
+            "        }",
+            "    }",
+            "}",
+        ]
+    )
+    return "\n".join(dsl_lines)
+
+
+def _append_contextual_architecture_nodes(
+    nodes: list[dict[str, str]],
+    edges: list[dict[str, str]],
+    signals: dict[str, list[str]],
+    *,
+    pattern: str,
+) -> None:
+    route_targets = {
+        "search_nlp": {
+            "entry": "searchExperience",
+            "core": "queryUnderstanding",
+            "integration": "marketplaceApis",
+            "data": "modelEvidence",
+            "control": "searchMonitoring",
+        },
+        "mobile_app": {
+            "entry": "mobileApp",
+            "core": "contentAdmin",
+            "integration": "authorityApis",
+            "data": "appData",
+            "control": "securityAudit",
+        },
+        "cloud_migration": {
+            "entry": "migrationRunbook",
+            "core": "migrationRunbook",
+            "integration": "currentApplication",
+            "data": "applicationData",
+            "control": "securityReview",
+        },
+    }
+    targets = route_targets.get(
+        pattern,
+        {
+            "entry": "experience",
+            "core": "workflowCore",
+            "integration": "integrationAdapters",
+            "data": "operationalData",
+            "control": "controlPlane",
+        },
+    )
+    existing_text = " ".join(f"{node.get('label', '')} {node.get('description', '')}" for node in nodes).lower()
+
+    def has_target(node_id: str) -> bool:
+        return any(node["id"] == node_id for node in nodes)
+
+    functional = [_short_signal(item, words=10, max_chars=110) for item in signals.get("functional", [])]
+    integrations = [_short_signal(item, words=10, max_chars=110) for item in signals.get("integration", [])]
+    data_items = [_short_signal(item, words=10, max_chars=110) for item in signals.get("data", [])]
+    controls = [_short_signal(item, words=10, max_chars=110) for item in [*signals.get("non_functional", []), *signals.get("compliance", [])]]
+    scope = [_short_signal(item, words=10, max_chars=110) for item in signals.get("scope", [])]
+
+    if functional:
+        label = functional[0]
+        if label.lower() not in existing_text:
+            _add_node(
+                nodes,
+                _diagram_node(
+                    "rfpScopeCapability",
+                    label,
+                    "container",
+                    "RFP-Specific Scope",
+                    "Represents the named release capability that should anchor the demo, MVP boundary, and acceptance conversation.",
+                    technology="Scoped capability",
+                ),
+            )
+            if has_target(targets["entry"]):
+                _add_edge(edges, _diagram_edge("rfpScopeCapability", targets["entry"], "drives the user-facing deployment scope"))
+
+    if integrations:
+        label = integrations[0]
+        if label.lower() not in existing_text:
+            _add_node(
+                nodes,
+                _diagram_node(
+                    "rfpInterfaceContract",
+                    label,
+                    "external_system",
+                    "Confirmed Interfaces",
+                    "Requires owner, API or batch contract, sandbox, sample payloads, error handling, and release window confirmation.",
+                ),
+            )
+            if has_target(targets["core"]):
+                _add_edge(edges, _diagram_edge(targets["core"], "rfpInterfaceContract", "depends on confirmed interface readiness"))
+
+    if data_items:
+        label = data_items[0]
+        if label.lower() not in existing_text:
+            _add_node(
+                nodes,
+                _diagram_node(
+                    "rfpDataReadiness",
+                    label,
+                    "container",
+                    "Data Governance",
+                    "Captures source ownership, quality threshold, migration or reporting definition, reconciliation rule, and retention evidence.",
+                    technology="Data readiness gate",
+                ),
+            )
+            if has_target(targets["data"]):
+                _add_edge(edges, _diagram_edge("rfpDataReadiness", targets["data"], "sets data acceptance rules"))
+
+    acceptance_signal = (controls or scope)[:1]
+    if acceptance_signal:
+        label = acceptance_signal[0]
+        if label.lower() not in existing_text:
+            _add_node(
+                nodes,
+                _diagram_node(
+                    "rfpAcceptanceGate",
+                    label,
+                    "container",
+                    "Controls & Operations",
+                    "Turns the RFP's named control or operating obligation into reviewer, evidence, remediation, and go-live sign-off steps.",
+                    technology="Acceptance gate",
+                ),
+            )
+            if has_target(targets["control"]):
+                _add_edge(edges, _diagram_edge("rfpAcceptanceGate", targets["control"], "defines evidence required for approval"))
+
+
+def _build_structurizr_architecture(raw_text: str, analysis: dict[str, Any]) -> dict[str, Any]:
+    signals = _analysis_signals(analysis)
+    focus = _rfp_focus(analysis, raw_text)
+    pool = _arch_signal_pool(signals, analysis)
+    pattern = _architecture_pattern(raw_text, analysis, signals)
+    nodes: list[dict[str, str]] = []
+    edges: list[dict[str, str]] = []
+
+    stakeholder_label = "Executive sponsor / business owner"
+    user_label = "Client users and operators"
+    if pattern == "search_nlp":
+        user_label = "Marketplace search users and catalog teams"
+    elif pattern == "mobile_app":
+        user_label = "Mobile learners, teachers, and content teams"
+    elif pattern == "cloud_migration":
+        user_label = "Application users, testers, and release owners"
+    elif pattern == "analytics":
+        user_label = "Business managers and analysts"
+    elif pattern == "document":
+        user_label = "Document submitters, reviewers, and approvers"
+    elif pattern == "workflow":
+        user_label = "Case workers, approvers, and reporting users"
+
+    _add_node(nodes, _diagram_node("executiveSponsor", stakeholder_label, "person", "Stakeholders", "Owns outcomes, funding posture, acceptance authority, and unresolved trade-offs."))
+    _add_node(nodes, _diagram_node("clientUsers", user_label, "person", "Stakeholders", "Use the delivered capability and validate release-one operating fit."))
+
+    if pattern == "search_nlp":
+        search_ui = _arch_label(pool, {"search", "query", "marketplace", "web service"}, "Marketplace search experience")
+        optimizer = _arch_label(pool, {"search string", "query intent", "stop-word", "stemming", "lemmatization", "tokenization", "synonym", "noise"}, "Query understanding and normalization service")
+        ranking = _arch_label(pool, {"relevance", "ranking", "information retrieval", "search relevance"}, "Search relevance and ranking service")
+        classifier = _arch_label(pool, {"category", "classification", "catalog", "seller category", "taxonomy"}, "Catalog category classification service")
+        solr = _arch_label(pool, {"solr", "search architecture"}, "Existing Apache Solr search platform")
+        model_data = _arch_label(pool, {"training data", "validation", "metrics", "relevance measurement"}, "Training, validation, and relevance metrics store")
+        api = _arch_label(pool, {"microservice", "api", "web service"}, "Marketplace microservice API boundary")
+        _add_node(nodes, _diagram_node("searchExperience", search_ui, "container", "Search Channels", "Captures user search terms and displays relevance-ranked product or service results.", technology="Search UI / API"))
+        _add_node(nodes, _diagram_node("queryUnderstanding", optimizer, "container", "NLP & Search Core", "Normalizes queries through intent handling, tokenization, stemming, lemmatization, synonyms, and noise removal.", technology="NLP pipeline"))
+        _add_node(nodes, _diagram_node("relevanceService", ranking, "container", "NLP & Search Core", "Applies ranking, relevance rules, measurement hooks, and search-quality feedback loops.", technology="Search relevance service"))
+        _add_node(nodes, _diagram_node("categoryClassifier", classifier, "container", "NLP & Search Core", "Classifies catalog/category intent and supports seller or product category suggestions where required.", technology="ML classification"))
+        _add_node(nodes, _diagram_node("marketplaceApis", api, "external_system", "Marketplace Integrations", "Existing marketplace services that consume or expose search capabilities."))
+        _add_node(nodes, _diagram_node("solrSearch", solr, "external_system", "Marketplace Integrations", "Existing Solr search architecture that must be integrated without disrupting current search operations."))
+        _add_node(nodes, _diagram_node("modelEvidence", model_data, "container", "Data & Model Evidence", "Stores training data references, validation datasets, relevance metrics, error reviews, and acceptance evidence.", technology="Evaluation data store"))
+        _add_node(nodes, _diagram_node("searchMonitoring", "Search quality monitoring and drift review", "container", "Controls & Operations", "Tracks relevance, query failures, model quality, regression risk, and retraining or tuning triggers.", technology="Model/search observability"))
+        _add_edge(edges, _diagram_edge("executiveSponsor", "searchExperience", "sets search-quality outcomes"))
+        _add_edge(edges, _diagram_edge("clientUsers", "searchExperience", "submit marketplace queries"))
+        _add_edge(edges, _diagram_edge("searchExperience", "queryUnderstanding", "sends raw search terms"))
+        _add_edge(edges, _diagram_edge("queryUnderstanding", "categoryClassifier", "derives catalog/category intent"))
+        _add_edge(edges, _diagram_edge("queryUnderstanding", "relevanceService", "passes normalized query features"))
+        _add_edge(edges, _diagram_edge("relevanceService", "solrSearch", "executes Solr-backed retrieval"))
+        _add_edge(edges, _diagram_edge("categoryClassifier", "marketplaceApis", "returns category suggestions through APIs"))
+        _add_edge(edges, _diagram_edge("modelEvidence", "categoryClassifier", "provides validation and training evidence"))
+        _add_edge(edges, _diagram_edge("relevanceService", "searchMonitoring", "emits relevance and failure metrics"))
+    elif pattern == "cloud_migration":
+        current_app = _arch_label(pool, {"application", "software", "system", "platform"}, "Existing application baseline")
+        aws_host = _arch_label(pool, {"aws", "dedicated host", "host", "cloud"}, "Target cloud runtime for migrated application")
+        test_env = _arch_label(pool, {"test environment", "validation", "testing", "uat"}, "Separate test and validation environment")
+        release = _arch_label(pool, {"upgrade", "release", "version", "process"}, "Formal upgrade and release process")
+        data = _arch_label(pool, {"data", "confidential", "records", "privacy"}, "Application data and confidentiality controls")
+        _add_node(nodes, _diagram_node("currentApplication", current_app, "external_system", "Current State", "Current application and environment that must be reproduced, migrated, tested, or updated."))
+        _add_node(nodes, _diagram_node("migrationRunbook", "Migration and cutover runbook", "container", "Migration Core", "Coordinates environment reproduction, migration steps, rollback criteria, and acceptance evidence.", technology="Migration workstream"))
+        _add_node(nodes, _diagram_node("awsRuntime", aws_host, "container", "Target Runtime", "Hosts the migrated application in the buyer-approved AWS setup with confirmed network and access constraints.", technology="AWS host"))
+        _add_node(nodes, _diagram_node("testEnvironment", test_env, "container", "Testing & Release", "Runs validation, regression testing, UAT evidence capture, and defect triage before production sign-off.", technology="Test environment"))
+        _add_node(nodes, _diagram_node("releasePipeline", release, "container", "Testing & Release", "Defines build, upgrade, promotion, rollback, and version-control governance for future releases.", technology="Release governance"))
+        _add_node(nodes, _diagram_node("applicationData", data, "container", "Data & Compliance", "Protects application data, migration evidence, access records, and confidentiality obligations.", technology="Controlled data store"))
+        _add_node(nodes, _diagram_node("securityReview", "Confidentiality and access-control review", "container", "Controls & Operations", "Confirms security evidence, reviewer authority, remediation windows, and production approval gates.", technology="Security compliance"))
+        _add_node(nodes, _diagram_node("opsMonitoring", "AWS operations and support handoff", "container", "Controls & Operations", "Tracks migration health, environment readiness, incident handoff, and support responsibilities.", technology="Cloud operations"))
+        _add_edge(edges, _diagram_edge("executiveSponsor", "migrationRunbook", "approves migration risk posture"))
+        _add_edge(edges, _diagram_edge("clientUsers", "testEnvironment", "perform UAT and regression validation"))
+        _add_edge(edges, _diagram_edge("currentApplication", "migrationRunbook", "provides source application baseline"))
+        _add_edge(edges, _diagram_edge("migrationRunbook", "awsRuntime", "rehosts application to target runtime"))
+        _add_edge(edges, _diagram_edge("migrationRunbook", "applicationData", "moves and protects system data"))
+        _add_edge(edges, _diagram_edge("awsRuntime", "testEnvironment", "is validated before go-live"))
+        _add_edge(edges, _diagram_edge("testEnvironment", "releasePipeline", "feeds upgrade acceptance evidence"))
+        _add_edge(edges, _diagram_edge("securityReview", "awsRuntime", "gates production readiness"))
+        _add_edge(edges, _diagram_edge("awsRuntime", "opsMonitoring", "emits environment and support signals"))
+    elif pattern == "mobile_app":
+        mobile = _arch_label(pool, {"mobile", "application", "app"}, "Mobile application")
+        cms = _arch_label(pool, {"content", "back-office", "administration", "backend", "learning", "quiz", "event"}, "Back-office content management module")
+        api = _arch_label(pool, {"mobile api", "api", "statistical data", "integration"}, "Authority mobile/statistical data APIs")
+        reporting = _arch_label(pool, {"dashboard", "report", "analytics", "statistical"}, "Initiative dashboards and reporting")
+        hosting = _arch_label(pool, {"hosting", "test", "production", "environment"}, "Application hosting and release environments")
+        security = _arch_label(pool, {"security audit", "audit", "compliance", "testing"}, "Security audit and acceptance closure")
+        _add_node(nodes, _diagram_node("mobileApp", mobile, "container", "Mobile Channels", "Delivers learning modules, events, quizzes, downloads, feedback, multilingual content, and notifications where required.", technology="Mobile app"))
+        _add_node(nodes, _diagram_node("contentAdmin", cms, "container", "Content & Engagement Core", "Manages learning content, events, quiz material, downloads, publishing workflow, and back-office administration.", technology="CMS / admin module"))
+        _add_node(nodes, _diagram_node("notificationService", "Push notification and feedback service", "container", "Content & Engagement Core", "Supports campaign updates, user feedback capture, notification routing, and engagement tracking.", technology="Notification service"))
+        _add_node(nodes, _diagram_node("authorityApis", api, "external_system", "Authority Integrations", "Client-provided APIs or datasets that must be confirmed for credentials, payloads, cadence, and test access."))
+        _add_node(nodes, _diagram_node("reporting", reporting, "container", "Data & Reporting", "Publishes initiative-wise dashboards, usage views, and management reporting from app and API data.", technology="Analytics/reporting"))
+        _add_node(nodes, _diagram_node("appData", "Mobile content, user feedback, and analytics data", "container", "Data & Reporting", "Stores content metadata, feedback, download records, dashboard data, and acceptance evidence.", technology="Application database"))
+        _add_node(nodes, _diagram_node("hosting", hosting, "container", "Controls & Operations", "Separates test, production, hosting, release, backup, and support responsibilities.", technology="Hosted environments"))
+        _add_node(nodes, _diagram_node("securityAudit", security, "container", "Controls & Operations", "Tracks security-audit findings, remediation evidence, UAT closure, and go-live approval.", technology="Security/UAT gate"))
+        _add_edge(edges, _diagram_edge("executiveSponsor", "reporting", "reviews adoption and initiative outcomes"))
+        _add_edge(edges, _diagram_edge("clientUsers", "mobileApp", "consume content and submit feedback"))
+        _add_edge(edges, _diagram_edge("contentAdmin", "mobileApp", "publishes approved learning content"))
+        _add_edge(edges, _diagram_edge("mobileApp", "notificationService", "registers feedback and engagement events"))
+        _add_edge(edges, _diagram_edge("mobileApp", "authorityApis", "requests client-provided statistical data"))
+        _add_edge(edges, _diagram_edge("authorityApis", "reporting", "feeds initiative dashboards"))
+        _add_edge(edges, _diagram_edge("mobileApp", "appData", "stores usage, content, and feedback records"))
+        _add_edge(edges, _diagram_edge("securityAudit", "hosting", "gates deployment after audit closure"))
+        _add_edge(edges, _diagram_edge("hosting", "mobileApp", "serves production mobile capability"))
+    else:
+        is_document = pattern == "document"
+        is_analytics = pattern == "analytics"
+        experience = _arch_label(pool, {"portal", "dashboard", "workflow", "screen", "application", "intake"}, f"{focus} user experience")
+        workflow = _arch_label(pool, {"workflow", "approval", "routing", "case", "review", "process"}, f"{focus} workflow orchestration")
+        document = _arch_label(pool, {"document", "upload", "repository", "file", "records"}, "Document and evidence management")
+        analytics = _arch_label(pool, {"report", "dashboard", "analytics", "metrics"}, "Operational reporting and analytics")
+        data = _arch_label(pool, {"data", "records", "migration", "database", "reconciliation"}, f"{focus} operational data store")
+        integration = _arch_label(pool, {"identity", "finance", "api", "repository", "notification", "integration", "batch"}, "Confirmed enterprise integration adapters")
+        control = _arch_label(pool, {"security", "audit", "encryption", "access control", "compliance"}, "Access, audit, and compliance controls")
+        _add_node(nodes, _diagram_node("experience", experience, "container", "Channels", "Presents the RFP-supported intake, workflow, dashboard, review, or operational screens.", technology="Web/application UI"))
+        _add_node(nodes, _diagram_node("workflowCore", workflow, "container", "Solution Core", "Coordinates business rules, task routing, state changes, notifications, exceptions, and acceptance evidence.", technology="Workflow services"))
+        if is_document or "document" in document.lower():
+            _add_node(nodes, _diagram_node("documentService", document, "container", "Solution Core", "Manages uploads, repository links, evidence retention, document metadata, and review handoff.", technology="Document service"))
+        if is_analytics or "report" in analytics.lower() or "dashboard" in analytics.lower():
+            _add_node(nodes, _diagram_node("reporting", analytics, "container", "Insights & Reporting", "Turns operational records into dashboards, management reports, reconciliation views, and acceptance evidence.", technology="Reporting/analytics"))
+        _add_node(nodes, _diagram_node("integrationAdapters", integration, "container", "Enterprise Integrations", "Encapsulates confirmed APIs, identity, finance, repository, notification, or batch interfaces behind owned contracts.", technology="Integration adapters"))
+        _add_node(nodes, _diagram_node("enterpriseSystems", "Client enterprise systems to confirm", "external_system", "Enterprise Integrations", "Buyer-owned systems whose owners, APIs, test data, and release windows must be confirmed."))
+        _add_node(nodes, _diagram_node("operationalData", data, "container", "Data Management", "Stores operational records, migrated data, data-quality evidence, reporting definitions, and audit history.", technology="Governed data store"))
+        _add_node(nodes, _diagram_node("controlPlane", control, "container", "Controls & Operations", "Enforces access, audit, encryption, compliance evidence, and production sign-off gates.", technology="Security controls"))
+        _add_node(nodes, _diagram_node("observability", "Workflow, integration, and support observability", "container", "Controls & Operations", "Monitors workflow health, integration failures, data-quality exceptions, incidents, and support handoff readiness.", technology="Operational monitoring"))
+        _add_edge(edges, _diagram_edge("executiveSponsor", "experience", "sets outcomes and acceptance criteria"))
+        _add_edge(edges, _diagram_edge("clientUsers", "experience", "complete operating workflows"))
+        _add_edge(edges, _diagram_edge("experience", "workflowCore", "submits tasks, decisions, and evidence"))
+        if any(node["id"] == "documentService" for node in nodes):
+            _add_edge(edges, _diagram_edge("workflowCore", "documentService", "attaches documents and review evidence"))
+            _add_edge(edges, _diagram_edge("documentService", "operationalData", "stores metadata and retention records"))
+        _add_edge(edges, _diagram_edge("workflowCore", "integrationAdapters", "uses confirmed interface contracts"))
+        _add_edge(edges, _diagram_edge("integrationAdapters", "enterpriseSystems", "exchanges data with client systems"))
+        _add_edge(edges, _diagram_edge("workflowCore", "operationalData", "records work state and acceptance evidence"))
+        if any(node["id"] == "reporting" for node in nodes):
+            _add_edge(edges, _diagram_edge("operationalData", "reporting", "feeds dashboards and management reports"))
+            _add_edge(edges, _diagram_edge("reporting", "executiveSponsor", "shows progress and business evidence"))
+        _add_edge(edges, _diagram_edge("controlPlane", "workflowCore", "gates access, audit, and sign-off"))
+        _add_edge(edges, _diagram_edge("workflowCore", "observability", "emits health, exception, and support signals"))
+
+    _append_contextual_architecture_nodes(nodes, edges, signals, pattern=pattern)
+    layout = _architecture_layout(pattern, focus, nodes, edges)
+
+    return {
+        "title": f"{pattern.replace('_', ' ').title()} deployment view for {focus}",
+        "notation": "Deployment flow / C4 container model",
+        "view": "Deployment readiness",
+        **layout,
+        "nodes": nodes,
+        "edges": edges,
+        "structurizr_dsl": _render_structurizr_dsl(focus, nodes, edges),
     }
 
 
@@ -1530,7 +2027,7 @@ def _talking_points(
             client_angle = "Move the conversation from task completion to acceptance: what evidence proves the migrated environment is ready."
             proof_needed = "Acceptance criteria, UAT owner, regression scope, test data readiness, defect severity rules, and final sign-off authority."
         elif any(term in lower for term in ("security", "confidential", "reviewer", "evidence format")):
-            client_angle = "Position security and CPRA compliance as go-live design constraints, not late-stage paperwork."
+            client_angle = "Position security, privacy, and confidentiality controls as go-live design constraints, not late-stage paperwork."
             proof_needed = "Mandatory controls, reviewer names, audit/security evidence, remediation windows, and confidentiality handling expectations."
         elif any(term in lower for term in ("client-owned", "dependencies", "price", "timeline")):
             client_angle = "Make buyer-owned dependencies visible before discussing price, timeline, staffing, or fixed-scope commitments."
@@ -1584,47 +2081,6 @@ def _narrative_from_evidence(analysis: dict[str, Any], evidence: list[dict[str, 
     }
 
 
-def _fallback_architecture_text(raw_text: str, analysis: dict[str, Any]) -> str:
-    recommendation = _architecture_detail(raw_text, analysis)
-    components = [str(item) for item in recommendation.get("components", [])]
-    node_names = [
-        re.sub(r"[^A-Za-z0-9]+", "_", component).strip("_")[:36] or f"Component_{index + 1}"
-        for index, component in enumerate(components[:10])
-    ]
-    if len(node_names) < 2:
-        node_names = ["Intake", "Application_Services", "Data_Layer", "Monitoring"]
-    diagram_lines = ["graph TD"]
-    for left, right in zip(node_names, node_names[1:]):
-        diagram_lines.append(f"{left} --> {right}")
-    return "\n".join(
-        [
-            str(recommendation.get("direction") or ""),
-            "Flow:",
-            "\n".join(f"- {component}" for component in components[:10]),
-            "Mermaid:",
-            *diagram_lines,
-        ]
-    )
-
-
-def _extract_mermaid(architecture_text: str) -> str:
-    lines = architecture_text.splitlines()
-    start = next((index for index, line in enumerate(lines) if line.strip().lower() == "graph td"), -1)
-    if start < 0:
-        return ""
-    diagram: list[str] = []
-    for line in lines[start:]:
-        stripped = line.strip()
-        if not stripped:
-            if diagram:
-                break
-            continue
-        if diagram and stripped.upper().startswith("TASK "):
-            break
-        diagram.append(stripped)
-    return "\n".join(diagram)
-
-
 _RFP_INTELLIGENCE_SYSTEM_PROMPT = """
 You are a principal pre-sales architect and executive pursuit strategist.
 
@@ -1646,9 +2102,10 @@ Critical rules:
 - Narrative must use retrieved knowledge only when the overlap is defensible;
   otherwise state that no strong internal evidence match is available.
 - Architecture must help a client-call team. Include executive-readable
-  business implications and technically specific design detail. Components must
-  be named after the actual product modules, integrations, data stores, control
-  gates, or operations responsibilities in the RFP. Avoid generic layer names.
+  business implications, technically specific design detail, and a deployment
+  diagram whose nodes are named after actual product modules, integrations,
+  data stores, control gates, environments, or operations responsibilities in
+  the RFP. Avoid generic layer names.
 - Architecture business_view, technical_view, data_flow, integration_flow,
   security_operations, decision_points, and call_prep_questions must not repeat
   the Must-Ask Questions, Top Risks, Talking Points, or Narrative wording.
@@ -1710,7 +2167,10 @@ RFP excerpt:
             and payload.get("must_ask_questions")
             and payload.get("top_risks")
             and payload.get("talking_points")
-            and payload.get("architecture", {}).get("components")
+            and (
+                payload.get("architecture", {}).get("diagram", {}).get("nodes")
+                or payload.get("architecture", {}).get("technical_view")
+            )
         ):
             return payload
     except Exception as exc:
@@ -1815,8 +2275,6 @@ def _dedupe_intelligence_tabs(intelligence: dict[str, Any]) -> dict[str, Any]:
     architecture = intelligence.get("architecture")
     if isinstance(architecture, dict):
         for key, limit in (
-            ("components", 14),
-            ("assumptions", 8),
             ("business_view", 6),
             ("technical_view", 10),
             ("data_flow", 7),
@@ -1829,7 +2287,7 @@ def _dedupe_intelligence_tabs(intelligence: dict[str, Any]) -> dict[str, Any]:
                 architecture.get(key),
                 seen,
                 limit=limit,
-                cross_tab=key != "components",
+                cross_tab=True,
             )
     return intelligence
 
@@ -1841,12 +2299,13 @@ def _build_rfp_intelligence(
     *,
     knowledge_matches: list[dict[str, Any]] | None = None,
     architecture_text: str | None = None,
-    architecture_generated_by: str = "deterministic_fallback",
+    architecture_generated_by: str = "structurizr_dsl_deterministic",
     intelligence_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     evidence = _knowledge_evidence_from_matches(knowledge_matches or [], analysis)
-    architecture_output = architecture_text or _fallback_architecture_text(raw_text, analysis)
     recommendation = _architecture_detail(raw_text, analysis)
+    architecture_artifact = _build_structurizr_architecture(raw_text, analysis)
+    architecture_output = architecture_text or architecture_artifact["structurizr_dsl"]
     if intelligence_override:
         architecture_candidate = intelligence_override.get("architecture")
         architecture: dict[str, Any] = architecture_candidate if isinstance(architecture_candidate, dict) else {}
@@ -1859,8 +2318,6 @@ def _build_rfp_intelligence(
             "relevant_knowledge_evidence": evidence,
             "architecture": {
                 "summary": architecture.get("summary") or recommendation.get("direction") or "",
-                "components": architecture.get("components") or recommendation.get("components") or [],
-                "assumptions": architecture.get("assumptions") or recommendation.get("assumptions") or [],
                 "business_view": architecture.get("business_view") or recommendation.get("business_view") or [],
                 "technical_view": architecture.get("technical_view") or recommendation.get("technical_view") or [],
                 "data_flow": architecture.get("data_flow") or recommendation.get("data_flow") or [],
@@ -1869,7 +2326,13 @@ def _build_rfp_intelligence(
                 "decision_points": architecture.get("decision_points") or recommendation.get("decision_points") or [],
                 "call_prep_questions": architecture.get("call_prep_questions") or recommendation.get("call_prep_questions") or [],
                 "architecture_text": architecture_output,
-                "mermaid": _extract_mermaid(architecture_output),
+                "mermaid": "",
+                "structurizr_dsl": architecture_artifact["structurizr_dsl"],
+                "diagram": {
+                    key: value
+                    for key, value in architecture_artifact.items()
+                    if key != "structurizr_dsl"
+                },
                 "generated_by": architecture_generated_by,
             },
         }
@@ -1883,8 +2346,6 @@ def _build_rfp_intelligence(
         "relevant_knowledge_evidence": evidence,
         "architecture": {
             "summary": recommendation.get("direction") or "",
-            "components": recommendation.get("components") or [],
-            "assumptions": recommendation.get("assumptions") or [],
             "business_view": recommendation.get("business_view") or [],
             "technical_view": recommendation.get("technical_view") or [],
             "data_flow": recommendation.get("data_flow") or [],
@@ -1893,98 +2354,22 @@ def _build_rfp_intelligence(
             "decision_points": recommendation.get("decision_points") or [],
             "call_prep_questions": recommendation.get("call_prep_questions") or [],
             "architecture_text": architecture_output,
-            "mermaid": _extract_mermaid(architecture_output),
+            "mermaid": "",
+            "structurizr_dsl": architecture_artifact["structurizr_dsl"],
+            "diagram": {
+                key: value
+                for key, value in architecture_artifact.items()
+                if key != "structurizr_dsl"
+            },
             "generated_by": architecture_generated_by,
         },
     }
     return _dedupe_intelligence_tabs(intelligence)
 
 
-def _build_architecture_generation_prompt(raw_text: str, analysis: dict[str, Any]) -> str:
-    requirement = "\n".join(
-        [
-            str(analysis.get("business_problem") or ""),
-            "Functional requirements:",
-            "\n".join(f"- {item}" for item in analysis.get("functional_requirements", [])[:8]),
-            "Integration needs:",
-            "\n".join(f"- {item}" for item in analysis.get("integration_needs", [])[:6]),
-            "Data needs:",
-            "\n".join(f"- {item}" for item in analysis.get("data_needs", [])[:6]),
-            "Security/compliance needs:",
-            "\n".join(f"- {item}" for item in analysis.get("compliance_needs", [])[:6]),
-            "Missing assumptions:",
-            "\n".join(f"- {item}" for item in analysis.get("missing_information", [])[:8]),
-        ]
-    ).strip()
-    source_excerpt = raw_text[:8000]
-    return f"""
-You are preparing ProposalPilot's architecture brief for an executive discovery call.
-
-Use only the RFP facts below. Do not add vendors, external systems, cloud products,
-certifications, budgets, dates, or user groups unless the RFP explicitly supports them.
-If a cloud service is not dictated by the RFP, write "cloud_service: " with no value.
-
-Extracted opportunity facts:
-{requirement}
-
-Source RFP excerpt:
-{source_excerpt}
-
-Return plain text only. No JSON. No markdown fences. Use this exact section order:
-
-ARCHITECTURE CALL BRIEF
-State the recommended architecture direction in 5 to 8 lines. Explain it for
-both executives and technical reviewers.
-
-BUSINESS OPERATING VIEW
-- Map the architecture to the buyer's outcome, users, process ownership, and
-  acceptance responsibility.
-- Include only RFP-supported facts and clearly mark unknowns as assumptions.
-
-TECHNICAL BLUEPRINT
-- Describe the module boundaries, APIs/adapters, data responsibilities,
-  security/control points, observability, and support handoff.
-- Be specific to this RFP's named capabilities.
-
-PRIMARY FLOW
-Use a compact text flow from intake to processing, integration/data, outputs,
-acceptance, monitoring, and support. Include short labels on transitions.
-
-DESIGN DECISIONS FOR THE CALL
-- List 5 to 7 decisions the team must validate before pricing or committing.
-
-COMPONENT REGISTER
-For each component include exactly:
-component:
-name: ...
-type: lowercase_snake_case
-cloud_service:
-description: ...
-call_question: ...
-
-MERMAID
-graph TD
-A --> B
-""".strip()
-
-
 async def _generate_architecture_output(raw_text: str, analysis: dict[str, Any]) -> tuple[str, str]:
-    llm_service = get_llm_service()
-    try:
-        text = await llm_service.complete(
-            system_prompt=(
-                "You are ProposalPilot's principal solution architect. Produce call-prep architecture outputs that are grounded only in the RFP. "
-                "Explain design implications clearly for executives and technical reviewers. Never invent product names or client facts."
-            ),
-            user_content=_build_architecture_generation_prompt(raw_text, analysis),
-            temperature=0.15,
-            model_name=settings.ARCHITECTURE_MODEL,
-        )
-        if "ARCHITECTURE CALL BRIEF" in text and "graph TD" in text:
-            return text, settings.ARCHITECTURE_MODEL
-    except Exception as exc:
-        logger.warning(f"Architecture model generation unavailable; using deterministic fallback: {exc}")
-    return _fallback_architecture_text(raw_text, analysis), "deterministic_fallback"
+    artifact = _build_structurizr_architecture(raw_text, analysis)
+    return artifact["structurizr_dsl"], "structurizr_dsl_deterministic"
 
 
 async def _enrich_rfp_intelligence(raw_text: str, payload: dict[str, Any], *, regenerate: bool = False) -> dict[str, Any]:
