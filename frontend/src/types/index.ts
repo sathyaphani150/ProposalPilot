@@ -209,6 +209,7 @@ export interface WarRoomSession {
 export interface WarRoomAgentOutput {
   reasoning: string
   confidence: number
+  generated_by?: 'llm' | 'deterministic_fallback'
   [key: string]: unknown
 }
 

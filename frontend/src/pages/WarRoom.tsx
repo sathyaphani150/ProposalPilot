@@ -16,7 +16,7 @@ import {
 import { rfpApi, warRoomApi } from '@/api/endpoints'
 import { getErrorMessage } from '@/api/client'
 import { useWarRoom } from '@/hooks/useWarRoom'
-import type { AgentName, WarRoomSession } from '@/types'
+import type { AgentName, WarRoomAgentOutput, WarRoomSession } from '@/types'
 
 const agentConfig: Array<{ key: AgentName; label: string; icon: ReactNode; color: string }> = [
   { key: 'architect', label: 'Tech Architect', icon: <UserRoundCog size={20} />, color: 'var(--color-primary-light)' },
@@ -25,9 +25,25 @@ const agentConfig: Array<{ key: AgentName; label: string; icon: ReactNode; color
   { key: 'proposal', label: 'Proposal Writer', icon: <FileText size={20} />, color: 'var(--color-info)' },
 ]
 
-function formatOutputValue(value: unknown): string {
+function stripGeneratedBy(value: unknown): unknown {
   if (Array.isArray(value)) {
-    return value
+    return value.map((item) => stripGeneratedBy(item))
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([key]) => key !== 'generated_by')
+        .map(([key, nestedValue]) => [key, stripGeneratedBy(nestedValue)]),
+    )
+  }
+  return value
+}
+
+function formatOutputValue(value: unknown): string {
+  const cleanedValue = stripGeneratedBy(value)
+
+  if (Array.isArray(cleanedValue)) {
+    return cleanedValue
       .map((item) => {
         if (typeof item === 'string') return `- ${item}`
         if (item && typeof item === 'object') {
@@ -39,12 +55,12 @@ function formatOutputValue(value: unknown): string {
       })
       .join('\n')
   }
-  if (value && typeof value === 'object') {
-    return Object.entries(value as Record<string, unknown>)
+  if (cleanedValue && typeof cleanedValue === 'object') {
+    return Object.entries(cleanedValue as Record<string, unknown>)
       .map(([key, nestedValue]) => `${key}: ${typeof nestedValue === 'object' ? JSON.stringify(nestedValue) : String(nestedValue)}`)
       .join('\n')
   }
-  return String(value ?? '')
+  return String(cleanedValue ?? '')
 }
 
 function renderAgentOutput(agent: AgentName, output: unknown): string {
@@ -104,7 +120,7 @@ function renderAgentOutput(agent: AgentName, output: unknown): string {
   add('Reasoning', 'reasoning')
   add('Confidence', 'confidence')
 
-  return sections.length > 0 ? sections.join('\n\n') : JSON.stringify(output, null, 2)
+  return sections.length > 0 ? sections.join('\n\n') : JSON.stringify(stripGeneratedBy(output), null, 2)
 }
 
 export function WarRoom() {
@@ -264,15 +280,33 @@ export function WarRoom() {
                 {(() => {
                   const agentDone = agentStatus[agent.key] === 'done' || Boolean(warRoom.agent_outputs?.[agent.key])
                   const agentBusy = warRoom.status === 'running' && !agentDone
+                  const agentOutput = warRoom.agent_outputs?.[agent.key] as WarRoomAgentOutput | undefined
+                  const generatedBy = agentOutput?.generated_by
                   return (
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem' }}>
                       <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0, color: agent.color }}>
                         {agent.icon}
                         {agent.label}
                       </h3>
-                      <span className={`badge ${agentDone ? 'badge-done' : agentBusy ? 'badge-war-room' : ''}`}>
-                        {agentDone ? 'done' : agentBusy ? 'thinking' : 'idle'}
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                        <span className={`badge ${agentDone ? 'badge-done' : agentBusy ? 'badge-war-room' : ''}`}>
+                          {agentDone ? 'done' : agentBusy ? 'thinking' : 'idle'}
+                        </span>
+                        {generatedBy === 'llm' ? (
+                          <span className="badge badge-done">AI-generated</span>
+                        ) : generatedBy === 'deterministic_fallback' ? (
+                          <span
+                            className="badge"
+                            style={{
+                              background: 'rgba(245, 158, 11, 0.16)',
+                              color: 'var(--color-warning)',
+                              border: '1px solid rgba(245, 158, 11, 0.35)',
+                            }}
+                          >
+                            Fallback (LLM unavailable)
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                   )
                 })()}

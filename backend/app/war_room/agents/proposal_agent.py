@@ -192,4 +192,6 @@ Return a JSON object matching the schema.
     override_text = _override_text(state)
     if override_text and not any(override_text in flag for flag in output.consistency_flags):
         output.consistency_flags.append(f"Human override reflected in final narrative: {override_text}.")
-    return {"proposal_output": output.model_dump()}
+    payload = output.model_dump()
+    payload["generated_by"] = "llm" if structured else "deterministic_fallback"
+    return {"proposal_output": payload}

@@ -246,4 +246,6 @@ Return a JSON object matching the schema.
         temperature=0.1,
     )
     output = structured or _fallback(state)
-    return {"architect_output": output.model_dump()}
+    payload = output.model_dump()
+    payload["generated_by"] = "llm" if structured else "deterministic_fallback"
+    return {"architect_output": payload}

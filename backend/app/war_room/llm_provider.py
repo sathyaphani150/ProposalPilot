@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Type, TypeVar
 
+from loguru import logger
 from pydantic import BaseModel
 
 T = TypeVar("T", bound=BaseModel)
@@ -28,7 +29,10 @@ class WarRoomLLMProvider:
                 temperature=temperature,
                 model_name=model_name,
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                f"War room agent LLM call failed ({exc.__class__.__name__}): {exc}. Falling back to deterministic output."
+            )
             return None
 
     async def complete(
@@ -47,7 +51,10 @@ class WarRoomLLMProvider:
                 temperature=temperature,
                 model_name=model_name,
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                f"War room agent LLM call failed ({exc.__class__.__name__}): {exc}. Falling back to deterministic output."
+            )
             return None
 
 
