@@ -173,7 +173,6 @@ export type AgentName =
   | 'cfo'
   | 'competitor'
   | 'proposal'
-  | 'supervisor'
 
 export type AgentStatus = 'idle' | 'thinking' | 'writing' | 'done' | 'error'
 
@@ -190,10 +189,28 @@ export interface WarRoomSession {
   status: WarRoomStatus
   call_notes: string | null
   human_overrides: Record<string, unknown>
-  agent_outputs: Record<AgentName, string | null>
+  agent_outputs: Record<string, unknown>
   matched_projects: SimilarProject[]
+  review_loops?: number
+  final_recommendations?: Record<string, unknown>
+  error_message?: string | null
+  discussion_log?: Array<{
+    agent: string
+    target_agent: string
+    comment: string
+    message_type?: string
+    round_index?: number
+    timestamp?: string
+  }>
   created_at: string
   updated_at: string
+}
+
+export interface WarRoomAgentOutput {
+  reasoning: string
+  confidence: number
+  generated_by?: 'llm' | 'deterministic_fallback'
+  [key: string]: unknown
 }
 
 // ── Proposal Types ────────────────────────────────────────────────────────

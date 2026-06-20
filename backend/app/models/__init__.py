@@ -4,6 +4,8 @@ from app.models.models import (
     RFPAnalysis,
     KnowledgeItem,
     WarRoomSession,
+    WarRoomMessage,
+    WarRoomOutput,
     Proposal,
 )
 
@@ -13,5 +15,7 @@ __all__ = [
     "RFPAnalysis",
     "KnowledgeItem",
     "WarRoomSession",
+    "WarRoomMessage",
+    "WarRoomOutput",
     "Proposal",
 ]

@@ -1,146 +1,50 @@
-"""
-ProposalPilot AI - deterministic baseline War Room service.
-"""
+"""War room orchestration service."""
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Mapping
 
+from loguru import logger
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import NotFoundError, ValidationError
-from app.models import RFPAnalysis, RFPSession, WarRoomSession
-from app.services.proposal_service import get_latest_prep_pack
+from app.models import (
+    RFPAnalysis,
+    RFPSession,
+    WarRoomMessage,
+    WarRoomOutput,
+    WarRoomSession,
+)
+from app.war_room import ProposalState, run_war_room_graph
+from app.war_room.context import get_relevant_context
+from app.ws_registry import broadcast
 
 
-def _items(value: Any) -> list[str]:
-    if not value:
+def _ensure_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _ensure_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _normalize_overrides(overrides: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not overrides:
         return []
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    return [str(value).strip()]
+    return [{"agent": "human", "override": overrides, "timestamp": datetime.now(timezone.utc).isoformat()}]
 
 
-def _lines(title: str, values: list[str], fallback: str) -> str:
-    rows = values[:6] or [fallback]
-    return title + "\n" + "\n".join(f"- {row}" for row in rows)
-
-
-def _currency_range(complexity: str | None) -> dict[str, Any]:
-    ranges = {
-        "low": (35_000, 55_000, 80_000, 6),
-        "medium": (75_000, 120_000, 175_000, 10),
-        "high": (150_000, 240_000, 360_000, 16),
-        "very_high": (275_000, 420_000, 650_000, 24),
-    }
-    minimum, recommended, maximum, weeks = ranges.get((complexity or "medium").lower(), ranges["medium"])
-    return {
-        "currency": "USD",
-        "minimum": minimum,
-        "recommended": recommended,
-        "maximum": maximum,
-        "duration_weeks": weeks,
-        "note": "Directional estimate only; validate integrations, data scope, SLAs, and team model before committing.",
-    }
-
-
-def _build_agent_outputs(
-    session: RFPSession,
-    analysis: RFPAnalysis,
-    prep_pack: dict[str, Any] | None,
-    *,
-    call_notes: str | None,
-    human_overrides: dict[str, Any] | None = None,
-) -> dict[str, str]:
-    functional = _items(analysis.functional_requirements)
-    nfrs = _items(analysis.non_functional_requirements)
-    integrations = _items(analysis.integration_needs)
-    data_needs = _items(analysis.data_needs)
-    compliance = _items(analysis.compliance_needs)
-    risks = _items(analysis.timeline_risks)
-    missing = _items(analysis.missing_information)
-    guardrails = _items(analysis.scope_boundaries)
-    matches = (prep_pack or {}).get("similar_projects") or []
-    best_match = matches[0] if matches else None
-    overrides = human_overrides or {}
-
-    estimate = _currency_range(analysis.estimated_complexity)
-
-    architect = "\n\n".join(
-        [
-            f"Recommended direction for {session.title}: modular API-first delivery with clear ingestion, workflow, retrieval, and export boundaries.",
-            _lines("Core capabilities to design around:", functional, "Confirm MVP user workflows before architecture lock."),
-            _lines("Integration/data constraints:", integrations + data_needs, "Validate source systems, API access, sample data, and ownership."),
-            _lines("Non-functional controls:", nfrs + compliance, "Define security, observability, and performance acceptance criteria."),
-            "Architecture risk: do not overbuild agent orchestration until grounding, retrieval, and export are stable.",
-        ]
-    )
-
-    cfo = "\n\n".join(
-        [
-            f"Directional commercial range: {estimate['currency']} {estimate['minimum']:,} - {estimate['maximum']:,}; recommended planning case {estimate['currency']} {estimate['recommended']:,}.",
-            f"Indicative duration: {estimate['duration_weeks']} weeks.",
-            _lines("Cost drivers:", integrations + data_needs + compliance, "Unknown integration/data/compliance scope can move cost materially."),
-            _lines("Commercial risks:", risks + missing, "Hold pricing assumptions until discovery answers are confirmed."),
-            "Margin guardrail: price discovery, architecture, and implementation separately if client uncertainty remains high.",
-        ]
-    )
-
-    competitor = "\n\n".join(
-        [
-            "Win strategy: lead with speed-to-clarity, grounded internal evidence, and transparent assumptions.",
-            (
-                f"Proof point: {best_match.get('title')} is a {best_match.get('match_type')} match with "
-                f"{round(float(best_match.get('confidence_score', 0)) * 100)}% confidence."
-                if best_match
-                else "Proof point gap: add or capture a relevant past-project story before final proposal."
-            ),
-            _lines("Differentiators to emphasize:", [
-                "Evidence-backed RFP analysis instead of generic proposal drafting.",
-                "Human override loop for scope, architecture, and commercial strategy.",
-                "Clear assumption and risk register before fixed commitments.",
-            ], "Use grounded delivery credibility rather than broad AI claims."),
-            _lines("Competitor pressure points:", guardrails + missing, "Competitors may overpromise; win by being precise and credible."),
-        ]
-    )
-
-    proposal = "\n\n".join(
-        [
-            f"Executive proposal angle: {analysis.business_problem or 'Client problem requires clarification.'}",
-            _lines("Include in proposed solution:", functional, "Define MVP scope around the highest-value workflow."),
-            _lines("Assumptions/exclusions:", guardrails + missing, "List assumptions explicitly in the proposal."),
-            _lines("Risk mitigation:", risks + compliance, "Map each risk to a discovery question or delivery control."),
-            "Next proposal step: convert the RFP analysis, call notes, and War Room outputs into a final proposal package.",
-        ]
-    )
-
-    supervisor_notes = [
-        "War Room baseline completed from RFP analysis and optional call notes.",
-        "All outputs are directional and should be validated with the client before pricing or scope commitment.",
-    ]
-    if call_notes:
-        supervisor_notes.append(f"Call notes included: {call_notes[:700]}")
-    if overrides:
-        supervisor_notes.append(f"Human overrides applied: {overrides}")
-
-    return {
-        "architect": architect,
-        "cfo": cfo,
-        "competitor": competitor,
-        "proposal": proposal,
-        "supervisor": "\n".join(f"- {note}" for note in supervisor_notes),
-    }
-
-
-async def start_war_room(
+async def _load_session_context(
     db: AsyncSession,
     session_id: uuid.UUID,
     *,
-    call_notes: str | None = None,
-    human_overrides: dict[str, Any] | None = None,
-) -> WarRoomSession:
+    call_notes: str | None,
+    human_overrides: dict[str, Any] | None,
+) -> tuple[RFPSession, RFPAnalysis, dict[str, Any]]:
     session_result = await db.execute(select(RFPSession).where(RFPSession.id == session_id))
     session = session_result.scalar_one_or_none()
     if not session:
@@ -156,35 +60,246 @@ async def start_war_room(
     if not analysis:
         raise ValidationError("Run RFP analysis before starting the War Room.")
 
-    prep_pack = await get_latest_prep_pack(db, session_id)
-    content = prep_pack.content if prep_pack else None
-    agent_outputs = _build_agent_outputs(
-        session,
-        analysis,
-        content,
+    context = await get_relevant_context(
+        db,
+        session=session,
+        analysis=analysis,
+        user_overrides=_normalize_overrides(human_overrides),
         call_notes=call_notes,
-        human_overrides=human_overrides,
+    )
+    return session, analysis, context
+
+
+def _build_initial_state(
+    *,
+    session: RFPSession,
+    analysis: RFPAnalysis,
+    context: dict[str, Any],
+    call_notes: str | None,
+    human_overrides: dict[str, Any] | None,
+) -> ProposalState:
+    return ProposalState(
+        session_id=str(session.id),
+        session_title=session.title,
+        client_name=session.client_name,
+        call_notes=call_notes or "",
+        rfp_analysis=analysis.to_dict(),
+        retrieved_context=_ensure_list(context.get("retrieved_context")),
+        similar_projects=_ensure_list(context.get("similar_projects")),
+        user_overrides=_normalize_overrides(human_overrides),
+        discussion_log=[],
+        unresolved_conflicts=[],
+        final_recommendations={},
+        review_loops=0,
+        run_id=str(uuid.uuid4()),
     )
 
+
+def _persist_war_room(
+    *,
+    db: AsyncSession,
+    session: RFPSession,
+    state: ProposalState,
+    call_notes: str | None,
+    human_overrides: dict[str, Any] | None,
+) -> WarRoomSession:
     war_room = WarRoomSession(
-        rfp_session_id=session_id,
+        rfp_session_id=session.id,
         status="complete",
         call_notes=call_notes,
         human_overrides=human_overrides or {},
-        agent_outputs=agent_outputs,
-        matched_projects=(content or {}).get("similar_projects", []),
+        agent_outputs={
+            "architect": _ensure_dict(state.get("architect_output")),
+            "cfo": _ensure_dict(state.get("cfo_output")),
+            "competitor": _ensure_dict(state.get("competitor_output")),
+            "proposal": _ensure_dict(state.get("proposal_output")),
+            "final_recommendations": _ensure_dict(state.get("final_recommendations")),
+            "supervisor": _ensure_dict(state.get("final_recommendations")),
+        },
+        matched_projects=_ensure_list(state.get("similar_projects")),
+        review_loops=int(state.get("review_loops") or 0),
+        final_recommendations=_ensure_dict(state.get("final_recommendations")),
         completed_at=datetime.now(timezone.utc),
     )
     db.add(war_room)
     session.status = "war_room_done"
+
+    for message in _ensure_list(state.get("discussion_log")):
+        war_room.messages.append(
+            WarRoomMessage(
+                agent=str(message.get("agent") or "system"),
+                target_agent=str(message.get("target_agent") or "all"),
+                comment=str(message.get("comment") or ""),
+                message_type=str(message.get("message_type") or "discussion"),
+                round_index=int(message.get("round_index") or 0),
+                payload=message,
+            )
+        )
+
+    for output_type in ("architect", "cfo", "competitor", "proposal", "final_recommendations"):
+        payload = _ensure_dict(state.get(f"{output_type}_output")) if output_type != "final_recommendations" else _ensure_dict(state.get("final_recommendations"))
+        source_agent = output_type if output_type != "final_recommendations" else "supervisor"
+        confidence = payload.get("confidence")
+        war_room.outputs.append(
+            WarRoomOutput(
+                output_type=output_type,
+                source_agent=source_agent,
+                payload=payload,
+                confidence=float(confidence) if isinstance(confidence, (int, float)) else None,
+            )
+        )
+
+    return war_room
+
+
+def _serialize_outputs(state: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "architect": _ensure_dict(state.get("architect_output")),
+        "cfo": _ensure_dict(state.get("cfo_output")),
+        "competitor": _ensure_dict(state.get("competitor_output")),
+        "proposal": _ensure_dict(state.get("proposal_output")),
+        "final_recommendations": _ensure_dict(state.get("final_recommendations")),
+        "supervisor": _ensure_dict(state.get("final_recommendations")),
+    }
+
+
+async def _execute_graph(war_room_id: uuid.UUID, initial_state: ProposalState) -> None:
+    from app.database import AsyncSessionLocal
+
+    try:
+        from app.war_room.graph import get_compiled_graph
+
+        session_key = str(war_room_id)
+        graph = get_compiled_graph()
+        result_state: dict[str, Any] = dict(initial_state)
+        async for update in graph.astream(initial_state, config={"configurable": {"thread_id": session_key}}, stream_mode="updates"):
+            for node_name, node_output in update.items():
+                if isinstance(node_output, dict):
+                    result_state.update(node_output)
+                await broadcast(session_key, {"agent": node_name, "type": "output", "content": node_output})
+        async with AsyncSessionLocal() as background_db:
+            result = await background_db.execute(
+                select(WarRoomSession)
+                .options(
+                    selectinload(WarRoomSession.messages),
+                    selectinload(WarRoomSession.outputs),
+                )
+                .where(WarRoomSession.id == war_room_id)
+            )
+            war_room = result.scalar_one_or_none()
+            if not war_room:
+                return
+            war_room.status = "complete"
+            war_room.agent_outputs = _serialize_outputs(result_state)
+            war_room.matched_projects = _ensure_list(result_state.get("similar_projects"))
+            war_room.review_loops = int(result_state.get("review_loops") or 0)
+            war_room.final_recommendations = _ensure_dict(result_state.get("final_recommendations"))
+            war_room.completed_at = datetime.now(timezone.utc)
+            war_room.error_message = None
+
+            if war_room.messages:
+                war_room.messages.clear()
+            for message in _ensure_list(result_state.get("discussion_log")):
+                war_room.messages.append(
+                    WarRoomMessage(
+                        agent=str(message.get("agent") or "system"),
+                        target_agent=str(message.get("target_agent") or "all"),
+                        comment=str(message.get("comment") or ""),
+                        message_type=str(message.get("message_type") or "discussion"),
+                        round_index=int(message.get("round_index") or 0),
+                        payload=message,
+                    )
+                )
+
+            if war_room.outputs:
+                war_room.outputs.clear()
+            for output_type, payload in _serialize_outputs(result_state).items():
+                source_agent = output_type if output_type != "final_recommendations" else "supervisor"
+                confidence = payload.get("confidence")
+                war_room.outputs.append(
+                    WarRoomOutput(
+                        output_type=output_type,
+                        source_agent=source_agent,
+                        payload=payload,
+                        confidence=float(confidence) if isinstance(confidence, (int, float)) else None,
+                    )
+                )
+
+            await background_db.commit()
+        await broadcast(session_key, {"type": "status", "content": "complete"})
+    except Exception as exc:
+        async with AsyncSessionLocal() as background_db:
+            result = await background_db.execute(
+                select(WarRoomSession).where(WarRoomSession.id == war_room_id)
+            )
+            war_room = result.scalar_one_or_none()
+            if war_room:
+                war_room.status = "failed"
+                war_room.error_message = str(exc)
+                await background_db.commit()
+        await broadcast(str(war_room_id), {"type": "status", "content": "failed", "error": str(exc)})
+
+
+async def start_war_room(
+    db: AsyncSession,
+    session_id: uuid.UUID,
+    *,
+    call_notes: str | None = None,
+    human_overrides: dict[str, Any] | None = None,
+) -> WarRoomSession:
+    session, analysis, context = await _load_session_context(
+        db,
+        session_id,
+        call_notes=call_notes,
+        human_overrides=human_overrides,
+    )
+
+    initial_state = _build_initial_state(
+        session=session,
+        analysis=analysis,
+        context=context,
+        call_notes=call_notes,
+        human_overrides=human_overrides,
+    )
+    session.status = "war_room_running"
+    war_room = WarRoomSession(
+        rfp_session_id=session.id,
+        status="running",
+        call_notes=call_notes,
+        human_overrides=human_overrides or {},
+        agent_outputs={},
+        matched_projects=_ensure_list(context.get("similar_projects")),
+        review_loops=0,
+        final_recommendations={},
+    )
+    db.add(war_room)
     await db.flush()
+    await db.commit()
     await db.refresh(war_room)
+
+    initial_state = _build_initial_state(
+        session=session,
+        analysis=analysis,
+        context=context,
+        call_notes=call_notes,
+        human_overrides=human_overrides,
+    )
+    logger.info(
+        "Running war room graph for session {} with {} context items",
+        session_id,
+        len(initial_state.get("retrieved_context") or []),
+    )
+    asyncio.create_task(_execute_graph(war_room.id, initial_state))
     return war_room
 
 
 async def get_latest_war_room(db: AsyncSession, session_id: uuid.UUID) -> WarRoomSession | None:
     result = await db.execute(
         select(WarRoomSession)
+        .options(
+            selectinload(WarRoomSession.messages),
+            selectinload(WarRoomSession.outputs),
+        )
         .where(WarRoomSession.rfp_session_id == session_id)
         .order_by(WarRoomSession.created_at.desc())
         .limit(1)

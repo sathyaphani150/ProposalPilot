@@ -104,6 +104,7 @@ export function NewRFP() {
               </div>
               <button
                 className="btn btn-icon btn-ghost"
+                aria-label="Remove selected file"
                 onClick={(e) => { e.stopPropagation(); setFile(null); setTitle('') }}
               >
                 <X size={18} />

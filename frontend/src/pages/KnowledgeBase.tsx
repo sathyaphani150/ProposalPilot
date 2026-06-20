@@ -189,6 +189,7 @@ export function KnowledgeBase() {
               />
               {hasSearch && (
                 <button
+                  aria-label="Clear search"
                   onClick={() => setSearchTerm('')}
                   style={{
                     position: 'absolute',
@@ -374,6 +375,7 @@ export function KnowledgeBase() {
                               </span>
                               <button
                                 className="btn-ghost"
+                                aria-label="Delete knowledge item"
                                 style={{ padding: '0.25rem', borderRadius: '4px', color: 'var(--color-error)' }}
                                 onClick={(e) => handleDelete(item.id, e)}
                               >
@@ -425,6 +427,7 @@ export function KnowledgeBase() {
                 <h3>Document Details</h3>
                 <button
                   className="btn btn-ghost btn-icon"
+                  aria-label="Close item details"
                   style={{ padding: '0.25rem' }}
                   onClick={() => setSelectedItem(null)}
                 >
@@ -563,6 +566,7 @@ export function KnowledgeBase() {
               <h2>Ingest Knowledge</h2>
               <button
                 className="btn btn-ghost btn-icon"
+                aria-label="Close dialog"
                 style={{ padding: '0.25rem' }}
                 onClick={() => setIsIngestOpen(false)}
               >
