@@ -4,6 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.war_room.confidence import calculate_agent_confidence
 from app.war_room.cost_calculator import compute_cost_estimate
 from app.war_room.llm_provider import get_war_room_llm_provider
 
@@ -72,7 +73,7 @@ class CFOOutput(BaseModel):
     financial_risks: list[str] = Field(default_factory=list)
     margin_assessment: str
     reasoning: str
-    confidence: float = Field(ge=0.0, le=1.0)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 def _override_text(state: dict[str, Any]) -> str:
@@ -161,7 +162,6 @@ def _fallback(state: dict[str, Any]) -> CFOOutput:
             f"Budget and duration are sized from {complexity} complexity, a {int(contingency_pct * 100)}% contingency buffer, session scope, and the architect's delivery plan."
             + (f" Override changed the commercial stance toward: {override_text}." if override_text else "")
         ),
-        confidence=0.74,
     )
 
 
@@ -188,5 +188,12 @@ Return a JSON object matching the schema.
     )
     output = structured or _fallback(state)
     payload = output.model_dump()
-    payload["generated_by"] = "llm" if structured else "deterministic_fallback"
+    generated_by = "llm" if structured else "deterministic_fallback"
+    payload["generated_by"] = generated_by
+    payload["confidence"] = calculate_agent_confidence(
+        agent="cfo",
+        state=state,
+        payload=payload,
+        generated_by=generated_by,
+    )
     return {"cfo_output": payload}
