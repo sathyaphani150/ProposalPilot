@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = "groq"  # openai | azure | google | groq | ollama
     LLM_MODEL: str = "llama-3.3-70b-versatile"
     RFP_ANALYSIS_MODEL: str = "llama-3.3-70b-versatile"
-    ARCHITECTURE_MODEL: str = "openai/gpt-oss-120B"
+    ARCHITECTURE_MODEL: str = "llama-3.3-70b-versatile"
     OPENAI_API_KEY: str = ""
     AZURE_OPENAI_API_KEY: str = ""
     AZURE_OPENAI_ENDPOINT: str = ""
@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     AZURE_OPENAI_API_VERSION: str = "2024-02-01"
     GOOGLE_API_KEY: str = ""
     GROQ_API_KEY: str = ""
+    GROQ_API_KEY1: str = ""
+    GROQ_API_KEY2: str = ""
+    GROQ_API_KEY3: str = ""
+    GROQ_API_KEYS: str = ""
     OLLAMA_URL: str = "http://localhost:11434/api/generate"
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     EMBEDDING_DIMENSIONS: int = 1536
@@ -112,6 +116,22 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.APP_ENV == "production"
+
+    @property
+    def groq_api_keys(self) -> list[str]:
+        keys: list[str] = []
+        for raw_value in (
+            self.GROQ_API_KEYS,
+            self.GROQ_API_KEY,
+            self.GROQ_API_KEY1,
+            self.GROQ_API_KEY2,
+            self.GROQ_API_KEY3,
+        ):
+            for key in str(raw_value or "").split(","):
+                cleaned = key.strip()
+                if cleaned and cleaned not in keys:
+                    keys.append(cleaned)
+        return keys
 
 
 @lru_cache

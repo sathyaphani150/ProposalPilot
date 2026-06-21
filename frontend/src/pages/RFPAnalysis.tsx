@@ -596,12 +596,6 @@ function ArchitectureView({ architecture, analysis }: { architecture?: RFPIntell
     <div className="content-stack">
       {displayArchitecture.summary ? <p className="readable-text">{displayArchitecture.summary}</p> : null}
       <ArchitectureDiagramView architecture={displayArchitecture} />
-      {displayArchitecture.structurizr_dsl ? (
-        <details className="architecture-dsl">
-          <summary>Structurizr DSL</summary>
-          <pre>{displayArchitecture.structurizr_dsl}</pre>
-        </details>
-      ) : null}
     </div>
   )
 }
@@ -683,6 +677,18 @@ export function RFPAnalysis() {
     return hasUsableIntelligence(generated) ? generated : fallbackIntelligence(analysis)
   }, [analysis])
   const extractionMeta = analysis?.raw_llm_output?.extraction_meta
+  const visibleTabs = useMemo(
+    () =>
+      tabs.filter(
+        (tab) =>
+          tab !== 'Relevant Knowledge Evidence' ||
+          !!intelligence?.relevant_knowledge_evidence?.length,
+      ),
+    [intelligence?.relevant_knowledge_evidence?.length],
+  )
+  const selectedTab = visibleTabs.includes(activeTab)
+    ? activeTab
+    : visibleTabs[0] || 'Must-Ask Questions'
   const isFallbackAnalysis =
     extractionMeta?.mode === 'deterministic_source_text' ||
     extractionMeta?.warnings?.some((warning) => warning.toLowerCase().includes('llm'))
@@ -762,13 +768,13 @@ export function RFPAnalysis() {
         <div>
           <div className="page-title">
             <FileText size={28} color="var(--color-primary-light)" />
-            <h1>{session.title}</h1>
+            <h1 title={session.title}>{session.title}</h1>
             {getStatusBadge(session.status)}
           </div>
           <p className="page-subtitle">
             Client: <strong style={{ color: 'var(--color-text-primary)' }}>{session.client_name || 'N/A'}</strong>
             <span style={{ margin: '0 0.75rem' }}>|</span>
-            File: <strong style={{ color: 'var(--color-text-primary)' }}>{session.original_filename}</strong>
+            File: <strong style={{ color: 'var(--color-text-primary)' }} title={session.original_filename}>{session.original_filename}</strong>
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -818,10 +824,10 @@ export function RFPAnalysis() {
           </div>
 
           <div className="panel" style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto', padding: '0.65rem' }}>
-            {tabs.map((tab) => (
+            {visibleTabs.map((tab) => (
               <button
                 key={tab}
-                className={`btn ${activeTab === tab ? 'btn-primary' : 'btn-secondary'}`}
+                className={`btn ${selectedTab === tab ? 'btn-primary' : 'btn-secondary'}`}
                 style={{ whiteSpace: 'nowrap', padding: '0.55rem 0.75rem' }}
                 onClick={() => setActiveTab(tab)}
               >
@@ -830,38 +836,38 @@ export function RFPAnalysis() {
             ))}
           </div>
 
-          {activeTab === 'Must-Ask Questions' ? (
+          {selectedTab === 'Must-Ask Questions' ? (
             <SectionCard title="Must-Ask Questions" icon={<HelpCircle size={20} />}>
               <QuestionCards questions={intelligence.must_ask_questions} />
             </SectionCard>
           ) : null}
 
-          {activeTab === 'Top Risks' ? (
+          {selectedTab === 'Top Risks' ? (
             <SectionCard title="Top Risks" icon={<ShieldAlert size={20} />}>
               <RiskCards risks={intelligence.top_risks} />
             </SectionCard>
           ) : null}
 
-          {activeTab === 'Talking Points' ? (
+          {selectedTab === 'Talking Points' ? (
             <SectionCard title="Talking Points" icon={<MessageSquare size={20} />}>
               <TalkingPointCards points={intelligence.talking_points} />
             </SectionCard>
           ) : null}
 
-          {activeTab === 'Narrative' ? (
+          {selectedTab === 'Narrative' ? (
             <SectionCard title={intelligence.narrative?.title || 'Narrative'} icon={<BookOpen size={20} />}>
               <p className="readable-text">{intelligence.narrative?.story || 'No narrative was generated.'}</p>
               <TextList items={intelligence.narrative?.how_it_helps} empty="No supporting narrative points were generated." />
             </SectionCard>
           ) : null}
 
-          {activeTab === 'Relevant Knowledge Evidence' ? (
+          {selectedTab === 'Relevant Knowledge Evidence' ? (
             <SectionCard title="Relevant Knowledge Evidence" icon={<Target size={20} />}>
               <EvidenceCards evidence={intelligence.relevant_knowledge_evidence} />
             </SectionCard>
           ) : null}
 
-          {activeTab === 'Architecture' ? (
+          {selectedTab === 'Architecture' ? (
             <SectionCard title="Architecture" icon={<CircuitBoard size={20} />}>
               <ArchitectureView architecture={intelligence.architecture} analysis={analysis} />
             </SectionCard>

@@ -98,6 +98,7 @@ class RFPSentimentOutput(BaseModel):
 
 
 class RFPMustAskQuestionOutput(BaseModel):
+    category: str = ""
     question: str
     why_it_matters: str
     assumption_to_validate: str
@@ -870,7 +871,7 @@ def _missing_information_questions(
         elif any(term in lower_label for term in ("upgrade", "release", "version")):
             questions.append(f"For '{label}', what release governance, branching/build process, approval path, rollback rule, and production promotion evidence are expected?")
         else:
-            questions.append(f"What exact workflow, roles, dependencies, and acceptance evidence should define completion for '{label}'?")
+            questions.append(f"For '{label}', which user roles, business rules, excluded paths, UAT proof, and business sign-off define done?")
 
     for item in signals["integration"][:3]:
         label = _short_signal(item)
@@ -1023,6 +1024,14 @@ def _dedupe_risk_cards(risks: list[dict[str, str]]) -> list[dict[str, str]]:
     return output
 
 
+def _risk_severity(base: str, unknown_count: int, signal_count: int) -> str:
+    if base == "High" or unknown_count >= 5 or signal_count >= 4:
+        return "High"
+    if unknown_count >= 2 or signal_count >= 2:
+        return "Medium-High"
+    return "Medium"
+
+
 def _risk_assessment(
     raw_text: str,
     tags: list[str],
@@ -1030,6 +1039,8 @@ def _risk_assessment(
 ) -> list[dict[str, str]]:
     lower = raw_text.lower()
     signals = _analysis_signals(analysis)
+    focus = _rfp_focus(analysis, raw_text)
+    unknown_count = len((analysis or {}).get("missing_information", []) or [])
     risks: list[dict[str, str]] = []
 
     for item in signals["integration"][:3]:
@@ -1037,11 +1048,12 @@ def _risk_assessment(
         risks.append(
             {
                 "risk_title": label,
-                "severity": "High",
+                "severity": _risk_severity("High", unknown_count, len(signals["integration"])),
                 "probability": "Medium",
-                "impact": f"Delivery and estimates can slip if the client has not confirmed interface ownership, environment access, credentials, payload examples, and test windows for '{label}'.",
-                "mitigation": f"Before commitment, obtain the interface contract, owner matrix, sample payloads, error scenarios, and integration test calendar for '{label}'.",
+                "impact": f"{label} is a pricing and schedule gate for {focus}; undocumented owners, credentials, payloads, environments, or test windows can convert build scope into client-wait time.",
+                "mitigation": f"Make {label} a named dependency in the proposal: interface contract, owner matrix, sandbox date, sample payloads, error scenarios, and integration test calendar.",
                 "owner": "Client",
+                "evidence": item[:260],
             }
         )
 
@@ -1050,11 +1062,12 @@ def _risk_assessment(
         risks.append(
             {
                 "risk_title": label,
-                "severity": "High",
+                "severity": _risk_severity("High", unknown_count, len(signals["data"])),
                 "probability": "Medium",
-                "impact": f"Acceptance can be disputed if ownership, quality thresholds, migration rules, reporting definitions, or reconciliation approach for '{label}' are unclear.",
-                "mitigation": f"Run data discovery for '{label}', assign source owners, and agree profiling, cleansing, reconciliation, and reporting acceptance rules.",
+                "impact": f"{label} can become an acceptance dispute if the buyer has not fixed source ownership, quality thresholds, migration rules, retention, reporting definitions, and reconciliation evidence.",
+                "mitigation": f"Run a data-readiness checkpoint for {label}: owner, sample extract, profiling result, cleansing responsibility, reconciliation rule, and report sign-off.",
                 "owner": "Joint",
+                "evidence": item[:260],
             }
         )
 
@@ -1063,11 +1076,12 @@ def _risk_assessment(
         risks.append(
             {
                 "risk_title": label,
-                "severity": "High",
+                "severity": _risk_severity("High", unknown_count, len(signals["non_functional"]) + len(signals["compliance"])),
                 "probability": "Medium",
-                "impact": f"Go-live can be blocked if evidence format, reviewer authority, remediation timing, or acceptance gate for '{label}' is not agreed early.",
-                "mitigation": f"Confirm control evidence, reviewer, test method, remediation SLA, and final sign-off gate for '{label}' before design lock.",
+                "impact": f"{label} can block go-live because control evidence, reviewer authority, remediation timing, and final approval often sit outside the engineering team.",
+                "mitigation": f"Agree the evidence pack for {label}: reviewer, test method, remediation SLA, exception process, and final sign-off gate before design lock.",
                 "owner": "Joint",
+                "evidence": item[:260],
             }
         )
 
@@ -1076,11 +1090,12 @@ def _risk_assessment(
         risks.append(
             {
                 "risk_title": label,
-                "severity": "Medium",
+                "severity": _risk_severity("Medium", unknown_count, len(signals["functional"])),
                 "probability": "Medium",
-                "impact": f"The '{label}' scope can become disputed if first-release behavior, exclusions, UAT data, and sign-off tests remain broad.",
-                "mitigation": f"Convert '{label}' into measurable acceptance criteria, explicit exclusions, owner sign-off, UAT evidence, and change-control triggers.",
+                "impact": f"{label} can expand beyond the priced release if user roles, business rules, excluded scenarios, UAT proof, and final owner sign-off are left broad.",
+                "mitigation": f"Convert {label} into release-one scenarios, exclusions, acceptance tests, owner sign-off, and change-control triggers.",
                 "owner": "Joint",
+                "evidence": item[:260],
             }
         )
 
@@ -1091,9 +1106,10 @@ def _risk_assessment(
                 "risk_title": label,
                 "severity": "Medium",
                 "probability": "Medium",
-                "impact": f"The '{label}' milestone can create commercial exposure if buyer-owned access, approvals, data, or environments arrive late.",
-                "mitigation": f"Tie '{label}' dates to dependency readiness, client-owned prerequisites, schedule-relief language, and change-request mechanics.",
+                "impact": f"{label} creates commercial exposure if buyer-owned access, approvals, data, or environments arrive after the proposal date assumes they are ready.",
+                "mitigation": f"Tie {label} to dependency-readiness entry criteria, client-owned prerequisites, schedule-relief language, and change-request mechanics.",
                 "owner": "Joint",
+                "evidence": item[:260],
             }
         )
 
@@ -1104,9 +1120,10 @@ def _risk_assessment(
                 "risk_title": scope_label,
                 "severity": "Medium",
                 "probability": "High",
-                "impact": f"The '{scope_label}' obligation can turn implementation into open-ended support, tuning, reporting, or incident ownership.",
-                "mitigation": f"Separate build, warranty, O&M, SLA coverage, escalation, monitoring, reporting cadence, and change-request obligations for '{scope_label}'.",
+                "impact": f"{scope_label} can turn the pursuit from implementation into open-ended support, tuning, reporting, and incident ownership unless the operating boundary is explicit.",
+                "mitigation": f"Separate build, warranty, O&M, SLA coverage, escalation, monitoring, reporting cadence, and change-request obligations for {scope_label}.",
                 "owner": "Joint",
+                "evidence": scope_label,
             }
         )
     if any(term in lower for term in ("ai", "machine learning", "model", "classification", "prediction", "nlp")):
@@ -1116,9 +1133,10 @@ def _risk_assessment(
                 "risk_title": ai_label,
                 "severity": "High",
                 "probability": "Medium",
-                "impact": f"The '{ai_label}' capability can underperform if validation data, target metrics, explainability, drift monitoring, and retraining ownership are undefined.",
-                "mitigation": f"Define validation data, thresholds, human review, error analysis, explainability, monitoring, and retraining ownership for '{ai_label}'.",
+                "impact": f"{ai_label} can underperform in production if the RFP's quality target is not converted into validation data, target metrics, human review, monitoring, and ownership.",
+                "mitigation": f"Define validation data, thresholds, error review, explainability, monitoring, and retraining ownership for {ai_label}.",
                 "owner": "Joint",
+                "evidence": ai_label,
             }
         )
 
@@ -1129,9 +1147,10 @@ def _risk_assessment(
                 "risk_title": focus,
                 "severity": "Medium",
                 "probability": "Medium",
-                "impact": f"Delivery confidence for '{focus}' will remain limited until success metrics, acceptance criteria, owners, and dependencies are confirmed.",
-                "mitigation": f"Use the first client call to convert '{focus}' into assumptions, exclusions, owner actions, acceptance tests, and dependency gates.",
+                "impact": f"Delivery confidence for {focus} stays low until leadership can name the success metric, acceptance authority, buyer-owned dependencies, and change-control triggers.",
+                "mitigation": f"Use the first client call to convert {focus} into assumptions, exclusions, owner actions, acceptance tests, and dependency gates.",
                 "owner": "Joint",
+                "evidence": focus,
             }
         )
     return _dedupe_risk_cards(risks)[:8]
@@ -1843,7 +1862,7 @@ def _evidence_terms(analysis: dict[str, Any]) -> set[str]:
     }
 
 
-def _knowledge_evidence_from_matches(matches: list[dict[str, Any]], analysis: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def knowledge_evidence_from_matches(matches: list[dict[str, Any]], analysis: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     query_terms = _evidence_terms(analysis or {})
     evidence: list[dict[str, Any]] = []
     for match in matches[:6]:
@@ -1854,11 +1873,13 @@ def _knowledge_evidence_from_matches(matches: list[dict[str, Any]], analysis: di
         score = round(float(match.get("score") or 0), 3)
         haystack = f"{title} {text} {' '.join(str(item) for item in match.get('tags') or [])} {' '.join(str(item) for item in match.get('tech_stack') or [])}".lower()
         overlap = {term for term in query_terms if term in haystack}
-        if score < 0.45:
+        if score < 0.35:
             continue
-        if query_terms and score < 0.68 and len(overlap) < 3:
+        if query_terms and score >= 0.70:
+            pass
+        elif query_terms and score < 0.68 and len(overlap) < 2:
             continue
-        if query_terms and not overlap:
+        elif query_terms and not overlap:
             continue
         evidence.append(
             {
@@ -1903,9 +1924,9 @@ def _sentiment_analysis(analysis: dict[str, Any], raw_text: str) -> dict[str, An
         points.append(
             {
                 "title": label,
-                "insight": f"The RFP explicitly points to '{label}', so the discussion should clarify first-release behavior, acceptance evidence, and owner sign-off.",
+                "insight": f"{label} is named as real scope in this RFP; leadership should decide how narrowly it belongs in release one and which buyer owner accepts it.",
                 "evidence": item[:260],
-                "implication": "Separate mandatory scope, optional scope, client-owned dependencies, and proposal assumptions for this requirement.",
+                "implication": f"Convert {label} into mandatory scope, optional scope, client-owned dependencies, and proposal assumptions before pricing.",
             }
         )
     if integrations:
@@ -1913,7 +1934,7 @@ def _sentiment_analysis(analysis: dict[str, Any], raw_text: str) -> dict[str, An
         points.append(
             {
                 "title": label,
-                "insight": f"The '{label}' integration appears material to delivery success.",
+                "insight": f"{label} appears material to delivery success, because the RFP makes an external interface part of the working solution rather than a later enhancement.",
                 "evidence": _joined(integrations, "Integration needs are referenced in the RFP.", limit=2),
                 "implication": "Do not commit fixed dates until interfaces, owners, environments, and test windows are confirmed.",
             }
@@ -1923,7 +1944,7 @@ def _sentiment_analysis(analysis: dict[str, Any], raw_text: str) -> dict[str, An
         points.append(
             {
                 "title": label,
-                "insight": f"The '{label}' data requirement can affect delivery confidence and acceptance.",
+                "insight": f"{label} can determine whether acceptance is objective or opinion-based, especially if source ownership and reconciliation are not named.",
                 "evidence": _joined(data_needs, "Data needs are referenced in the RFP.", limit=2),
                 "implication": "Ask for representative data, source-system ownership, quality constraints, and reconciliation responsibilities.",
             }
@@ -1933,17 +1954,17 @@ def _sentiment_analysis(analysis: dict[str, Any], raw_text: str) -> dict[str, An
         points.append(
             {
                 "title": control,
-                "insight": f"The '{control}' expectation should be treated as an architecture and go-live constraint.",
+                "insight": f"{control} should be treated as an architecture and go-live constraint, not as a compliance appendix after build completion.",
                 "evidence": _evidence_for(raw_text, {"security", "confidential", "privacy", "audit", "encryption", "access control"}, "Security/governance terms are present in the RFP."),
                 "implication": "Confirm mandatory controls, sign-off authority, audit evidence, and production readiness gates early.",
             }
         )
     return {
         "overall_sentiment": posture,
-        "summary": f"{focus} is a {posture.lower()} opportunity. The RFP gives enough signal to plan discovery, but commitments should depend on the specific requirements, integrations, data, controls, and acceptance gates extracted from this document.",
+        "summary": f"{focus} is a {posture.lower()} opportunity because the RFP names visible delivery scope while leaving commitment-sensitive dependencies around acceptance, data, integrations, controls, or owner decisions to qualify.",
         "confidence": "medium" if raw_text and len(raw_text) > 1500 else "low",
         "points": points[:6],
-        "recommended_posture": f"Proceed with executive discovery for {focus}; avoid price, timeline, and final architecture commitments until the named assumptions are validated.",
+        "recommended_posture": f"Proceed with executive discovery for {focus}; make the proposal conditional on the named RFP scope, buyer-owned dependencies, acceptance evidence, and control gates.",
     }
 
 
@@ -1959,6 +1980,7 @@ def _must_ask_question_cards(
         category = "Discovery"
         why = "This changes delivery confidence, pricing, timeline, architecture, or acceptance risk for this specific RFP."
         assumption = "The client can confirm this from source-system owners, business owners, delivery owners, or sign-off authorities before proposal commitment."
+        evidence = ""
         if any(term in lower for term in ("test", "testing", "uat", "regression", "defect")):
             category = "Testing and acceptance"
             why = "Testing ownership and acceptance evidence determine when the migrated application can be considered complete."
@@ -1975,6 +1997,21 @@ def _must_ask_question_cards(
             category = "Security and compliance"
             why = "Security and statutory obligations can block go-live or change the delivery approach if evidence expectations are unclear."
             assumption = "The buyer can identify mandatory controls, legal/compliance reviewers, evidence format, and remediation windows."
+            evidence = _evidence_for(raw_text, {"security", "confidential", "cpra", "compliance", "audit"}, "")
+        elif any(term in lower for term in ("interface", "api", "payload", "sandbox", "integration")):
+            category = "Integration readiness"
+            why = "The proposal cannot safely commit interface effort or timing until client-owned contracts, environments, and owners are known."
+            assumption = "The buyer can provide interface documentation, sandbox access, credentials, payload examples, and test-window ownership."
+            evidence = _evidence_for(raw_text, {"api", "integration", "interface", "web service", "microservice"}, "")
+        elif any(term in lower for term in ("data", "migration", "quality", "reconciliation", "retention", "reporting")):
+            category = "Data ownership"
+            why = "Data quality, ownership, migration, and reporting definitions directly affect acceptance and downstream operating trust."
+            assumption = "The buyer can name source systems, data owners, sample extracts, quality thresholds, reconciliation rules, and report definitions."
+            evidence = _evidence_for(raw_text, {"data", "migration", "database", "report", "reconciliation"}, "")
+        elif any(term in lower for term in ("model", "nlp", "classification", "relevance", "metric", "retraining")):
+            category = "AI quality"
+            why = "AI/NLP scope needs objective validation criteria so improvement claims can be tested instead of debated."
+            assumption = "The buyer can approve validation data, relevance metrics, monitoring expectations, and human review ownership."
         elif any(term in lower for term in ("out of scope", "support", "o&m", "buyer-owned")):
             category = "Scope and operations"
             why = "Scope boundaries prevent implementation work from becoming open-ended support, consulting, or unmanaged change requests."
@@ -1985,6 +2022,7 @@ def _must_ask_question_cards(
                 "question": question,
                 "why_it_matters": why,
                 "assumption_to_validate": assumption,
+                "evidence": evidence,
             }
         )
     return cards
@@ -2002,16 +2040,16 @@ def _talking_points(
     ]
     for item in signals["functional"][:2]:
         label = _short_signal(item)
-        source_points.append(f"{label}: pin down release-one behavior, exclusions, UAT evidence, and sign-off owner.")
+        source_points.append(f"{label}: use the call to define release-one scenarios, exclusions, UAT proof, and the accountable sign-off owner.")
     for item in signals["integration"][:2]:
         label = _short_signal(item)
-        source_points.append(f"{label}: ask for the interface contract, environment access, owner, payloads, and test window.")
+        source_points.append(f"{label}: make interface contract, environment access, owner, payloads, and test window a proposal dependency.")
     for item in signals["data"][:2]:
         label = _short_signal(item)
-        source_points.append(f"{label}: confirm source owner, data quality, migration responsibility, and reconciliation rule.")
+        source_points.append(f"{label}: turn source ownership, quality, migration responsibility, and reconciliation rule into explicit acceptance evidence.")
     for item in [*signals["non_functional"][:1], *signals["compliance"][:1]]:
         label = _short_signal(item)
-        source_points.append(f"{label}: identify the reviewer, evidence format, remediation SLA, and production sign-off path.")
+        source_points.append(f"{label}: identify reviewer authority, evidence format, remediation SLA, and production sign-off path before design lock.")
     prep = report.get("prospect_call_prep", {}) if isinstance(report.get("prospect_call_prep"), dict) else {}
     if len(source_points) < 5:
         source_points.extend(prep.get("strongest_talking_points") or report.get("win_strategy") or [])
@@ -2037,6 +2075,7 @@ def _talking_points(
                 "point": point,
                 "client_angle": client_angle,
                 "proof_needed": proof_needed,
+                "evidence": _evidence_for(raw_text, set(re.findall(r"[A-Za-z][A-Za-z0-9+-]{3,}", point.lower())[:5]), ""),
             }
         )
     return points
@@ -2090,15 +2129,21 @@ client facts, integrations, budgets, dates, products, certifications, or past
 projects.
 
 Critical rules:
+- Write as if a VP is preparing for a specific client call, not a generic RFP
+  review. Reuse the buyer's own vocabulary.
+- Quote or paraphrase actual requirement names, product/system names, vendor
+  names, dates, milestones, or section phrases from the RFP wherever they exist.
+- Each sentiment point must cite a specific RFP phrase in evidence.
+- Risks must name the actual dependency, system, data set, approval gate,
+  migration step, security requirement, or acceptance condition that creates the
+  exposure. Avoid generic risk categories.
+- Talking points must be concise call-prep notes for leadership, with the client
+  angle and proof needed tied to this RFP.
 - Every card heading must be specific to this RFP. Do not use generic headings
   like "Integration readiness", "Data readiness", "Scope clarity", "Control
   sign-off", "Opportunity signal", "Leadership concern", or "Client dependency".
 - If a section item cannot point to a specific RFP phrase, do not include it.
 - Questions must ask about named assumptions from this RFP.
-- Risks must be concrete, named after the actual requirement/dependency, and
-  explain why that exact item threatens delivery, pricing, acceptance, or go-live.
-- Talking points must sound like directors preparing for a client call, not
-  generic project-management advice.
 - Narrative must use retrieved knowledge only when the overlap is defensible;
   otherwise state that no strong internal evidence match is available.
 - Architecture must help a client-call team. Include executive-readable
@@ -2113,6 +2158,27 @@ Critical rules:
 """
 
 
+_GENERIC_INTELLIGENCE_PHRASES = {
+    "pin down release-one behavior",
+    "delivery and estimates can slip if",
+    "acceptance can be disputed if",
+    "position {title}",
+    "opportunity signals",
+    "leadership concerns",
+    "scope clarity",
+    "control sign-off",
+    "integration readiness:",
+    "data readiness:",
+    "for '{label}'",
+    "{label}:",
+}
+
+
+def _contains_generic_intelligence_phrases(payload: dict[str, Any]) -> bool:
+    text = str(payload).lower()
+    return any(phrase.lower() in text for phrase in _GENERIC_INTELLIGENCE_PHRASES)
+
+
 async def _generate_llm_rfp_intelligence(
     raw_text: str,
     analysis: dict[str, Any],
@@ -2121,7 +2187,7 @@ async def _generate_llm_rfp_intelligence(
     regenerate: bool = False,
 ) -> dict[str, Any] | None:
     llm_service = get_llm_service()
-    clipped_text = raw_text[:6_000]
+    clipped_text = raw_text[:12_000]
     evidence_text = "\n".join(
         f"- {item.get('title')} ({item.get('domain')}, score={item.get('score')}): {item.get('why_relevant')}"
         for item in knowledge_evidence[:5]
@@ -2158,7 +2224,7 @@ RFP excerpt:
             system_prompt=_RFP_INTELLIGENCE_SYSTEM_PROMPT,
             user_content=user_content,
             output_schema=RFPIntelligenceOutput,
-            temperature=0.15 if regenerate else 0.02,
+            temperature=0.15 if regenerate else 0.10,
             model_name=settings.RFP_ANALYSIS_MODEL,
         )
         payload = result.model_dump()
@@ -2172,6 +2238,9 @@ RFP excerpt:
                 or payload.get("architecture", {}).get("technical_view")
             )
         ):
+            if _contains_generic_intelligence_phrases(payload):
+                logger.warning("RFP intelligence LLM output looked templated; using evidence fallback.")
+                return None
             return payload
     except Exception as exc:
         logger.warning(f"RFP intelligence LLM generation unavailable; using evidence fallback: {exc}")
@@ -2302,7 +2371,7 @@ def _build_rfp_intelligence(
     architecture_generated_by: str = "structurizr_dsl_deterministic",
     intelligence_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    evidence = _knowledge_evidence_from_matches(knowledge_matches or [], analysis)
+    evidence = knowledge_evidence_from_matches(knowledge_matches or [], analysis)
     recommendation = _architecture_detail(raw_text, analysis)
     architecture_artifact = _build_structurizr_architecture(raw_text, analysis)
     architecture_output = architecture_text or architecture_artifact["structurizr_dsl"]
@@ -2384,7 +2453,7 @@ async def _enrich_rfp_intelligence(raw_text: str, payload: dict[str, Any], *, re
         except Exception as exc:
             logger.warning(f"Knowledge retrieval unavailable during RFP analysis enrichment: {exc}")
 
-    evidence = _knowledge_evidence_from_matches(knowledge_matches, payload)
+    evidence = knowledge_evidence_from_matches(knowledge_matches, payload)
     intelligence_override = await _generate_llm_rfp_intelligence(
         raw_text,
         payload,

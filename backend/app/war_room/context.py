@@ -45,7 +45,17 @@ async def get_relevant_context(
     retrieved_context: list[dict[str, Any]] = []
     if query:
         try:
-            similar_projects = await knowledge_service.search_knowledge(query, limit=WAR_ROOM_CONTEXT_MATCH_LIMIT)
+            raw_projects = await knowledge_service.search_knowledge(query, limit=WAR_ROOM_CONTEXT_MATCH_LIMIT)
+            analysis_dict = {
+                "business_problem": analysis.business_problem,
+                "functional_requirements": analysis.functional_requirements or [],
+                "integration_needs": analysis.integration_needs or [],
+                "data_needs": analysis.data_needs or [],
+                "compliance_needs": analysis.compliance_needs or [],
+                "domain_tags": analysis.domain_tags or [],
+            }
+            from app.services.rfp_engine import knowledge_evidence_from_matches
+            similar_projects = knowledge_evidence_from_matches(raw_projects, analysis_dict)
         except Exception as exc:
             logger.warning(f"War Room context knowledge search failed for session {session.id}: {exc}")
             similar_projects = []

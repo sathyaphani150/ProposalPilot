@@ -109,6 +109,15 @@ class LLMService:
         self._chat_model: BaseChatModel | None = None
         self._embeddings: Any | None = None
         self._chat_disabled_reason: str | None = None
+        self._groq_key_index = 0
+
+    def _next_groq_api_key(self) -> str:
+        keys = settings.groq_api_keys
+        if not keys:
+            raise LLMServiceError("Groq API key is not configured.")
+        key = keys[self._groq_key_index % len(keys)]
+        self._groq_key_index += 1
+        return key
 
     # ── Chat Model ─────────────────────────────────────────────────────
     def get_chat_model(
@@ -172,11 +181,9 @@ class LLMService:
                 raise LLMServiceError(
                     "langchain-groq is not installed. Run: pip install langchain-groq"
                 ) from exc
-            if not settings.GROQ_API_KEY:
-                raise LLMServiceError("Groq API key is not configured.")
             return ChatGroq(  # type: ignore[call-arg,arg-type]
                 model=selected_model,
-                api_key=SecretStr(settings.GROQ_API_KEY),
+                api_key=SecretStr(self._next_groq_api_key()),
                 temperature=temperature,
                 streaming=streaming,
                 timeout=120,
@@ -258,19 +265,6 @@ class LLMService:
         if self._chat_disabled_reason:
             raise LLMServiceError(self._chat_disabled_reason)
 
-        model = self.get_chat_model(temperature=temperature, model_name=model_name)
-
-        # Standard with_structured_output path
-        try:
-            structured_model = model.with_structured_output(
-                output_schema,
-                method="json_mode",
-                strict=True,
-            )
-        except (TypeError, ValueError, NotImplementedError) as exc:
-            logger.debug(f"Strict JSON structured output setup unavailable; falling back to default method: {exc}")
-            structured_model = model.with_structured_output(output_schema)
-
         messages: list[BaseMessage] = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_content),
@@ -278,6 +272,17 @@ class LLMService:
 
         last_error: Exception | None = None
         for attempt in range(STRUCTURED_EXTRACTION_MAX_ATTEMPTS):
+            model = self.get_chat_model(temperature=temperature, model_name=model_name)
+            try:
+                structured_model = model.with_structured_output(
+                    output_schema,
+                    method="json_mode",
+                    strict=True,
+                )
+            except (TypeError, ValueError, NotImplementedError) as exc:
+                logger.debug(f"Strict JSON structured output setup unavailable; falling back to default method: {exc}")
+                structured_model = model.with_structured_output(output_schema)
+
             try:
                 result = await structured_model.ainvoke(messages)
                 # If result is already parsed Pydantic schema

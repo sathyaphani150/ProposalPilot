@@ -98,8 +98,8 @@ export function NewRFP() {
               }}
             >
               <CheckCircle size={24} color="var(--color-success)" />
-              <div style={{ flex: 1, textAlign: 'left' }}>
-                <div style={{ fontWeight: 600, marginBottom: '0.2rem' }}>{file.name}</div>
+              <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
+                <div style={{ fontWeight: 600, marginBottom: '0.2rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={file.name}>{file.name}</div>
                 <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
                   {formatSize(file.size)}
                 </div>
@@ -108,6 +108,7 @@ export function NewRFP() {
                 className="btn btn-icon btn-ghost"
                 aria-label="Remove selected file"
                 onClick={(e) => { e.stopPropagation(); setFile(null); setTitle('') }}
+                style={{ flexShrink: 0 }}
               >
                 <X size={18} />
               </button>
