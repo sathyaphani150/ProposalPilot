@@ -92,6 +92,15 @@ class Settings(BaseSettings):
             return json.loads(v)
         return v
 
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def normalize_database_url(cls, v: str) -> str:
+        if v.startswith("postgresql://"):
+            return v.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if v.startswith("postgres://"):
+            return v.replace("postgres://", "postgresql+asyncpg://", 1)
+        return v
+
     @field_validator("ALLOWED_EXTENSIONS", mode="before")
     @classmethod
     def parse_extensions(cls, v: str | List[str]) -> List[str]:
