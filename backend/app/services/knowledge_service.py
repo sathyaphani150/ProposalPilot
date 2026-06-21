@@ -43,6 +43,18 @@ STOP_WORDS = {
 }
 
 
+def _metadata_values(metadata: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    for key, value in metadata.items():
+        if isinstance(value, (str, int, float)):
+            values.append(f"{key}: {value}")
+        elif isinstance(value, list):
+            values.extend(str(entry) for entry in value if isinstance(entry, (str, int, float)))
+        elif isinstance(value, dict):
+            values.extend(_metadata_values(value))
+    return values
+
+
 def chunk_text(text: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> list[str]:
     """
     Split text into character-based chunks with overlap.
@@ -177,10 +189,27 @@ async def extract_knowledge_text(item: KnowledgeItem) -> str:
     return item.description or ""
 
 
+def _knowledge_item_search_document(item: KnowledgeItem, source_text: str) -> str:
+    """Build the text that should be embedded and lexically searched."""
+    source_text = source_text.strip()
+    description = (item.description or "").strip()
+    parts = [
+        f"Title: {item.title}",
+        f"Type: {item.item_type}",
+        f"Domain: {item.domain or 'unknown'}",
+        f"Tech stack: {' '.join(item.tech_stack or [])}",
+        f"Tags: {' '.join(item.tags or [])}",
+        f"Metadata: {' '.join(_metadata_values(item.extra_metadata or {}))}",
+        f"Description: {description}",
+        source_text if source_text and source_text != description else "",
+    ]
+    return "\n".join(part for part in parts if part and part.strip())
+
+
 async def estimate_chunk_count(item: KnowledgeItem) -> int:
     """Best-effort chunk count used when vector indexing is unavailable."""
     try:
-        return len(chunk_text(await extract_knowledge_text(item)))
+        return len(chunk_text(_knowledge_item_search_document(item, await extract_knowledge_text(item))))
     except Exception:
         return 0
 
@@ -193,7 +222,7 @@ async def process_knowledge_item(item: KnowledgeItem) -> tuple[list[str], int]:
     logger.info(f"Processing knowledge item {item.id} of type {item.item_type}")
     
     # 1. Get raw text
-    raw_text = await extract_knowledge_text(item)
+    raw_text = _knowledge_item_search_document(item, await extract_knowledge_text(item))
     if not raw_text:
         logger.warning(f"Knowledge item {item.id} has no file path or description")
         return [], 0
@@ -283,7 +312,7 @@ async def search_knowledge(
                 limit=limit,
             )
 
-    return _merge_search_results(vector_results, db_results, limit)
+    return _merge_search_results(vector_results, db_results, limit, query=query)
 
 
 async def keyword_search_knowledge_items(
@@ -318,14 +347,7 @@ def _tokenize(text: str) -> list[str]:
 
 
 def _metadata_text(item: KnowledgeItem) -> str:
-    values: list[str] = []
-    metadata = item.extra_metadata or {}
-    for value in metadata.values():
-        if isinstance(value, (str, int, float)):
-            values.append(str(value))
-        elif isinstance(value, list):
-            values.extend(str(entry) for entry in value if isinstance(entry, (str, int, float)))
-    return " ".join(values)
+    return " ".join(_metadata_values(item.extra_metadata or {}))
 
 
 def _score_knowledge_item(item: KnowledgeItem, query: str) -> float:
@@ -389,10 +411,44 @@ def _knowledge_item_to_search_result(item: KnowledgeItem, score: float) -> dict[
     }
 
 
+def _score_search_result(result: dict[str, Any], query: str) -> float:
+    tokens = _tokenize(query)
+    if not tokens:
+        return float(result.get("score") or 0)
+
+    fields = [
+        (str(result.get("title") or ""), 1.0),
+        (" ".join(str(item) for item in result.get("tech_stack") or []), 0.9),
+        (" ".join(str(item) for item in result.get("tags") or []), 0.9),
+        (str(result.get("domain") or ""), 0.75),
+        (str(result.get("item_type") or ""), 0.45),
+        (str(result.get("text") or ""), 0.7),
+    ]
+    lowered_fields = [(text.lower(), weight) for text, weight in fields if text]
+    weighted_total = 0.0
+    matched_tokens = 0
+    for token in tokens:
+        token_weight = max(
+            (weight for text, weight in lowered_fields if token in text),
+            default=0.0,
+        )
+        if token_weight:
+            matched_tokens += 1
+            weighted_total += token_weight
+    lexical_score = 0.0
+    if matched_tokens:
+        coverage = matched_tokens / len(tokens)
+        weighted = weighted_total / len(tokens)
+        lexical_score = min(0.98, 0.12 + (coverage * 0.38) + (weighted * 0.36))
+    provider_score = float(result.get("score") or 0)
+    return min(0.99, max(provider_score, lexical_score) + min(provider_score, lexical_score) * 0.08)
+
+
 def _merge_search_results(
     vector_results: list[dict[str, Any]],
     db_results: list[dict[str, Any]],
     limit: int,
+    query: str = "",
 ) -> list[dict[str, Any]]:
     merged: dict[str, dict[str, Any]] = {}
 
@@ -400,9 +456,12 @@ def _merge_search_results(
         doc_id = str(result.get("doc_id") or result.get("point_id") or "")
         if not doc_id:
             continue
+        ranked = {**result}
+        if query:
+            ranked["score"] = _score_search_result(ranked, query)
         existing = merged.get(doc_id)
-        if existing is None or float(result.get("score") or 0) > float(existing.get("score") or 0):
-            merged[doc_id] = result
+        if existing is None or float(ranked.get("score") or 0) > float(existing.get("score") or 0):
+            merged[doc_id] = ranked
 
     return sorted(
         merged.values(),

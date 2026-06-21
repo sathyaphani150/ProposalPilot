@@ -17,6 +17,10 @@ CAPABILITY_TAG_KEYWORDS: dict[str, frozenset[str]] = {
     "Query Understanding": frozenset({"query intent", "query understanding", "user query", "search query"}),
     "Product Category Classification": frozenset({"category classification", "categorization", "classify product", "classify service"}),
     "Machine Learning": frozenset({"machine learning", "ml algorithm", "word2vec", "svm", "naive bayes", "model training"}),
+    "Predictive Analytics": frozenset({"predictive analytics", "prediction", "predictive model", "deep learning", "tensorflow"}),
+    "Demand Forecasting": frozenset({"demand forecasting", "demand forecast", "sales forecasting", "forecasting engine", "time series"}),
+    "Inventory Optimization": frozenset({"inventory optimization", "stock replenishment", "replenishment", "stock forecast", "inventory forecast"}),
+    "Retail Technology": frozenset({"retail", "pos system", "point of sale", "store inventory", "stock keeping"}),
     "Cognitive Search": frozenset({"cognitive search", "semantic search", "intelligent search"}),
     "Search Relevance": frozenset({"relevance", "precision", "recall", "ndcg", "mrr"}),
     "Catalog Management": frozenset({"catalog", "product catalog", "service catalog", "seller upload"}),
@@ -33,6 +37,10 @@ CAPABILITY_LABELS: dict[str, str] = {
     "Query Understanding": "query intent understanding",
     "Product Category Classification": "product/service category classification",
     "Machine Learning": "machine learning",
+    "Predictive Analytics": "predictive analytics",
+    "Demand Forecasting": "demand forecasting",
+    "Inventory Optimization": "inventory optimization",
+    "Retail Technology": "retail technology",
     "Cognitive Search": "cognitive search",
     "Search Relevance": "search relevance measurement",
     "Catalog Management": "catalog management",
@@ -141,6 +149,12 @@ TECHNICAL_SIGNAL_TERMS: frozenset[str] = frozenset(
         "search relevance",
         "query understanding",
         "seller category suggestion",
+        "forecasting",
+        "demand forecasting",
+        "time series",
+        "predictive analytics",
+        "deep learning",
+        "tensorflow",
     }
 )
 
@@ -155,6 +169,8 @@ INTEGRATION_SIGNAL_TERMS: frozenset[str] = frozenset(
         "current search architecture",
         "integration",
         "consumed by apis",
+        "pos",
+        "point of sale",
     }
 )
 
@@ -322,6 +338,11 @@ RFP_SIGNAL_CATEGORY_KEYWORDS: dict[str, frozenset[str]] = {
             "search",
             "mobile",
             "interface",
+            "forecast",
+            "forecasting",
+            "prediction",
+            "replenishment",
+            "optimization",
         }
     ),
     "integration": frozenset(
@@ -338,6 +359,8 @@ RFP_SIGNAL_CATEGORY_KEYWORDS: dict[str, frozenset[str]] = {
             "source system",
             "etl",
             "sync",
+            "pos",
+            "point of sale",
         }
     ),
     "data": frozenset(
@@ -355,6 +378,12 @@ RFP_SIGNAL_CATEGORY_KEYWORDS: dict[str, frozenset[str]] = {
             "source code",
             "storage",
             "etl",
+            "forecast",
+            "forecasting",
+            "time series",
+            "inventory",
+            "stock",
+            "replenishment",
         }
     ),
     "control": frozenset(

@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.services.rfp_engine import _deterministic_extract, _finalize_analysis_payload
+from app.services.rfp_engine import (
+    _deterministic_extract,
+    _finalize_analysis_payload,
+    knowledge_evidence_from_matches,
+)
 from app.services.rfp_service import _analysis_needs_recovery
 from app.services.leadership_output import sanitize_analysis_payload_for_leadership
 
@@ -311,6 +315,43 @@ def test_etrm_call_prep_avoids_false_ai_and_weak_evidence() -> None:
     assert "container solution" in architecture["structurizr_dsl"]
     assert "components" not in architecture
     assert "assumptions" not in architecture
+
+
+def test_knowledge_evidence_ranks_domain_specific_forecasting_project_first() -> None:
+    analysis = {
+        "business_problem": "Retail demand forecasting engine for inventory optimization and stock replenishment.",
+        "functional_requirements": [
+            "Predict demand using time series forecasting and deep learning models.",
+        ],
+        "integration_needs": ["Integrate with POS systems for real-time inventory updates."],
+        "data_needs": ["Use sales history, inventory data, and replenishment signals."],
+        "domain_tags": ["Demand Forecasting", "Inventory Optimization", "Retail Technology"],
+    }
+    matches = [
+        {
+            "title": "MediLink Healthcare Interoperability Hub",
+            "domain": "healthcare",
+            "item_type": "project",
+            "score": 0.50,
+            "text": "Interoperability platform enabling healthcare providers to exchange patient data securely using FHIR standards. Supports real-time data sync and audit logging",
+            "tech_stack": ["Node.js", "FHIR", "MongoDB", "React", "GraphQL"],
+            "tags": ["data integration", "event streaming"],
+        },
+        {
+            "title": "RetailSense Demand Forecasting Engine",
+            "domain": "retail",
+            "item_type": "project",
+            "score": 0.50,
+            "text": "Predictive analytics platform for retail demand forecasting using deep learning models. Automates stock replenishment strategies and integrates with POS systems for real-time updates.",
+            "tech_stack": ["Python", "TensorFlow", "FastAPI", "PostgreSQL", "Docker", "React"],
+            "tags": ["time series", "forecasting", "ML pipeline", "inventory optimization"],
+        },
+    ]
+
+    evidence = knowledge_evidence_from_matches(matches, analysis)
+
+    assert evidence[0]["title"] == "RetailSense Demand Forecasting Engine"
+    assert evidence[0]["score"] > evidence[1]["score"]
 
 
 def test_rfp_analysis_ui_uses_executive_tab_set_only() -> None:

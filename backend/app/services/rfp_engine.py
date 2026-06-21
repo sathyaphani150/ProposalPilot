@@ -1862,22 +1862,69 @@ def _evidence_terms(analysis: dict[str, Any]) -> set[str]:
     }
 
 
+_GENERIC_EVIDENCE_MATCH_TERMS = {
+    "application",
+    "analytics",
+    "audit",
+    "cloud",
+    "data",
+    "database",
+    "development",
+    "fastapi",
+    "integration",
+    "management",
+    "platform",
+    "postgresql",
+    "python",
+    "react",
+    "report",
+    "reporting",
+    "security",
+    "service",
+    "system",
+    "update",
+}
+
+
+def _knowledge_match_strength(
+    match: dict[str, Any],
+    query_terms: set[str],
+    score: float,
+) -> tuple[float, set[str], set[str]]:
+    title = str(match.get("title") or "").lower()
+    domain = str(match.get("domain") or "").lower()
+    tags = " ".join(str(item) for item in match.get("tags") or []).lower()
+    tech_stack = " ".join(str(item) for item in match.get("tech_stack") or []).lower()
+    text = str(match.get("text") or "").lower()
+    haystack = f"{title} {domain} {tags} {tech_stack} {text}"
+    overlap = {term for term in query_terms if term in haystack}
+    strong_overlap = {term for term in overlap if term not in _GENERIC_EVIDENCE_MATCH_TERMS}
+    title_tag_overlap = {term for term in strong_overlap if term in f"{title} {domain} {tags}"}
+
+    relevance = score
+    relevance += min(len(overlap), 8) * 0.012
+    relevance += min(len(strong_overlap), 8) * 0.035
+    relevance += min(len(title_tag_overlap), 5) * 0.045
+    return min(relevance, 0.99), overlap, strong_overlap
+
+
 def knowledge_evidence_from_matches(matches: list[dict[str, Any]], analysis: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     query_terms = _evidence_terms(analysis or {})
     evidence: list[dict[str, Any]] = []
-    for match in matches[:6]:
+    for match in matches[:8]:
         title = str(match.get("title") or "Internal knowledge item").strip()
         text = _strip_reference_noise(str(match.get("text") or ""))
         if not text:
             continue
         score = round(float(match.get("score") or 0), 3)
-        haystack = f"{title} {text} {' '.join(str(item) for item in match.get('tags') or [])} {' '.join(str(item) for item in match.get('tech_stack') or [])}".lower()
-        overlap = {term for term in query_terms if term in haystack}
+        relevance, overlap, strong_overlap = _knowledge_match_strength(match, query_terms, score)
         if score < 0.35:
             continue
         if query_terms and score >= 0.70:
             pass
-        elif query_terms and score < 0.68 and len(overlap) < 2:
+        elif query_terms and relevance < 0.45:
+            continue
+        elif query_terms and score < 0.68 and len(strong_overlap) == 0 and len(overlap) < 3:
             continue
         elif query_terms and not overlap:
             continue
@@ -1886,13 +1933,13 @@ def knowledge_evidence_from_matches(matches: list[dict[str, Any]], analysis: dic
                 "title": title,
                 "domain": match.get("domain") or "unknown",
                 "item_type": match.get("item_type") or "project",
-                "score": score,
+                "score": round(relevance, 3),
                 "why_relevant": text[:420],
                 "tech_stack": match.get("tech_stack") or [],
                 "tags": match.get("tags") or [],
             }
         )
-    return evidence
+    return sorted(evidence, key=lambda item: float(item.get("score") or 0), reverse=True)
 
 
 def _sentiment_analysis(analysis: dict[str, Any], raw_text: str) -> dict[str, Any]:
@@ -3165,6 +3212,14 @@ def _deterministic_extract(raw_text: str) -> tuple[RFPExtractionOutput, dict[str
                 "word2vec",
                 "svm",
                 "naive bayes",
+                "forecast",
+                "forecasting",
+                "demand forecasting",
+                "time series",
+                "predictive analytics",
+                "inventory optimization",
+                "stock replenishment",
+                "tensorflow",
             },
             limit=10,
             require_actionable=False,
@@ -3179,13 +3234,13 @@ def _deterministic_extract(raw_text: str) -> tuple[RFPExtractionOutput, dict[str
         ),
         "data_needs": _pick_units(
             units,
-            {"data", "database", "records", "report", "statistical", "storage", "document", "backend", "catalog", "taxonomy", "category", "training data", "search logs"},
+            {"data", "database", "records", "report", "statistical", "storage", "document", "backend", "catalog", "taxonomy", "category", "training data", "search logs", "forecast", "forecasting", "time series", "inventory", "stock", "replenishment", "pos"},
             limit=8,
             exclude_admin_only=True,
         ),
         "integration_needs": _pick_units(
             units,
-            {"api", "apis", "integration", "integrate", "internal systems", "third party", "external", "mobile apis", "solr", "apache solr", "microservice", "micro-service"},
+            {"api", "apis", "integration", "integrate", "internal systems", "third party", "external", "mobile apis", "solr", "apache solr", "microservice", "micro-service", "pos", "point of sale"},
             limit=8,
             exclude_admin_only=True,
         ),
