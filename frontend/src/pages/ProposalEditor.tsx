@@ -28,6 +28,34 @@ function formatLabel(value: string) {
   return SECTION_LABELS[value] || value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
+function formatNumberText(value: string) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return value
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(numeric)
+}
+
+function formatDictString(value: string) {
+  const text = value.trim()
+  if (!text.startsWith('{') || !text.endsWith('}') || !text.includes(':')) return null
+
+  const entries = text
+    .slice(1, -1)
+    .split(',')
+    .map((part) => part.trim())
+    .map((part) => {
+      const separatorIndex = part.indexOf(':')
+      if (separatorIndex === -1) return null
+      const rawKey = part.slice(0, separatorIndex).trim().replace(/^['"]|['"]$/g, '')
+      const rawValue = part.slice(separatorIndex + 1).trim().replace(/^['"]|['"]$/g, '')
+      if (!rawKey) return null
+      const valueText = rawKey === 'currency' || rawKey.includes('pct') ? rawValue : formatNumberText(rawValue)
+      return { label: formatLabel(rawKey), value: valueText }
+    })
+    .filter((entry): entry is { label: string; value: string } => Boolean(entry))
+
+  return entries.length ? entries : null
+}
+
 function ProposalValue({ value }: { value: unknown }) {
   if (value === null || value === undefined || value === '') return <p className="text-muted">Not specified.</p>
   if (Array.isArray(value)) {
@@ -45,12 +73,27 @@ function ProposalValue({ value }: { value: unknown }) {
       <div className="proposal-detail-grid">
         {Object.entries(value as Record<string, unknown>).map(([key, nestedValue]) => (
           <div className="proposal-detail" key={key}>
-            <span className="text-xs text-muted">{formatLabel(key)}</span>
+            <span className="proposal-detail-title">{formatLabel(key)}</span>
             <ProposalValue value={nestedValue} />
           </div>
         ))}
       </div>
     )
+  }
+  if (typeof value === 'string') {
+    const dictEntries = formatDictString(value)
+    if (dictEntries) {
+      return (
+        <div className="proposal-detail-grid proposal-detail-grid--compact">
+          {dictEntries.map((entry) => (
+            <div className="proposal-detail" key={entry.label}>
+              <span className="proposal-detail-title">{entry.label}</span>
+              <p className="readable-text">{entry.value}</p>
+            </div>
+          ))}
+        </div>
+      )
+    }
   }
   return <p className="readable-text">{String(value)}</p>
 }

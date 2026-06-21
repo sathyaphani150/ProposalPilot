@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.war_room.confidence import calculate_agent_confidence
 from app.war_room.llm_provider import get_war_room_llm_provider
+from app.war_room.specificity_check import warn_if_generic_agent_output
 
 SYSTEM_PROMPT = """
 You are the Competitor Strategist on an internal proposal war room team.
@@ -52,6 +53,10 @@ recruitment project story"), it must appear directly in differentiators.
 OUTPUT FIELDS:
 - positioning_strategy: one of the four stances above, one sentence why.
 - differentiators, win_themes, competitive_risks: as above.
+  Every differentiator and win theme must reference at least one concrete
+  fact from the RFP analysis: a named requirement, named evaluation signal,
+  or the client's actual industry/domain. Reject any line that could be
+  pasted unchanged into a proposal for a different client.
 
 Return JSON matching the schema.
 """
@@ -158,6 +163,8 @@ Return a JSON object matching the schema.
     payload = output.model_dump()
     generated_by = "llm" if structured else "deterministic_fallback"
     payload["generated_by"] = generated_by
+    if structured:
+        warn_if_generic_agent_output("competitor", state, payload)
     payload["confidence"] = calculate_agent_confidence(
         agent="competitor",
         state=state,

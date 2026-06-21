@@ -51,7 +51,41 @@ function formatOutputValue(value: unknown): string {
       .map(([key, nestedValue]) => `${key}: ${typeof nestedValue === 'object' ? JSON.stringify(nestedValue) : String(nestedValue)}`)
       .join('\n')
   }
-  return String(cleanedValue ?? '')
+  return formatScalarOutput(cleanedValue)
+}
+
+function formatLabel(value: string): string {
+  return value
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+}
+
+function formatCurrency(value: string): string {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return value
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(numeric)
+}
+
+function formatScalarOutput(value: unknown): string {
+  const text = String(value ?? '').trim()
+  if (!text.startsWith('{') || !text.endsWith('}') || !text.includes(':')) return text
+
+  const entries = text
+    .slice(1, -1)
+    .split(',')
+    .map((part) => part.trim())
+    .map((part) => {
+      const separatorIndex = part.indexOf(':')
+      if (separatorIndex === -1) return null
+      const rawKey = part.slice(0, separatorIndex).trim().replace(/^['"]|['"]$/g, '')
+      const rawValue = part.slice(separatorIndex + 1).trim().replace(/^['"]|['"]$/g, '')
+      if (!rawKey) return null
+      const formattedValue = rawKey === 'currency' || rawKey.includes('pct') ? rawValue : formatCurrency(rawValue)
+      return `${formatLabel(rawKey)}: ${formattedValue}`
+    })
+    .filter((entry): entry is string => Boolean(entry))
+
+  return entries.length ? entries.join('\n') : text
 }
 
 function renderAgentOutput(agent: AgentName, output: unknown): string {
@@ -260,7 +294,6 @@ export function WarRoom() {
   const averageConfidence = completedOutputs.length
     ? Math.round(completedOutputs.reduce((sum, output) => sum + (confidencePercent(output.confidence) || 0), 0) / completedOutputs.length)
     : null
-  const hasFallback = completedOutputs.some((output) => output.generated_by === 'deterministic_fallback')
 
   return (
     <div className="fade-in">
@@ -312,13 +345,15 @@ export function WarRoom() {
               placeholder="Example: Use offshore-heavy model, reduce scope to MVP, keep architecture simple..."
               style={{ minHeight: 130 }}
             />
-            <button
-              className="btn btn-secondary mt-3"
-              onClick={() => applyOverride()}
-              disabled={busy || !overrideText.trim()}
-            >
-              Apply Override
-            </button>
+            <div className="war-room-override-actions">
+              <button
+                className="btn btn-secondary"
+                onClick={() => applyOverride()}
+                disabled={busy || !overrideText.trim()}
+              >
+                Apply Override
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -336,50 +371,41 @@ export function WarRoom() {
         </div>
       ) : (
         <>
-          <div className="panel mb-4">
-            <div className="war-room-status-row">
-              <div className="war-room-status-meta">
-                <span
-                  className={`badge ${
-                    warRoom.status === 'failed'
-                      ? ''
-                      : warRoom.status === 'complete'
-                        ? 'badge-done'
-                        : 'badge-war-room'
-                  }`}
-                  style={{ textTransform: 'uppercase' }}
-                >
-                  {warRoom.status}
-                </span>
-                <span className="text-secondary">
-                  Matched projects: <span className="mono-data">{warRoom.matched_projects?.length || 0}</span>
-                </span>
+          <div className="panel panel--raised mb-4">
+            <div className="verdict-grid">
+              <div>
+                <div className="war-room-status-meta mb-2">
+                  <span
+                    className={`badge ${
+                      warRoom.status === 'failed'
+                        ? 'badge-danger'
+                        : warRoom.status === 'complete'
+                          ? 'badge-done'
+                          : 'badge-war-room'
+                    }`}
+                    style={{ textTransform: 'uppercase' }}
+                  >
+                    {warRoom.status}
+                  </span>
+                  <span className="text-muted text-sm mono-data">
+                    Generated {new Date(warRoom.updated_at || warRoom.created_at).toLocaleString()}
+                  </span>
+                </div>
+                <h3>Verdict Summary</h3>
+                <p className="text-secondary text-sm">
+                  {warRoom.status === 'complete' ? 'Four-role synthesis complete' : 'War Room synthesis in progress'}
+                </p>
               </div>
-              <span className="text-muted text-sm mono-data">
-                Generated {new Date(warRoom.updated_at || warRoom.created_at).toLocaleString()}
-              </span>
+              <div className="stat-tile">
+                <span className="text-xs text-muted">Overall Confidence</span>
+                <div className="mono-data pipeline-count">{averageConfidence ?? 0}%</div>
+              </div>
+              <div className="stat-tile">
+                <span className="text-xs text-muted">Matched Projects</span>
+                <div className="mono-data pipeline-count">{warRoom.matched_projects?.length || 0}</div>
+              </div>
             </div>
           </div>
-
-          {warRoom.status === 'complete' ? (
-            <div className="panel panel--raised mb-4">
-              <div className="verdict-grid">
-                <div>
-                  <h3>Verdict Summary</h3>
-                  <p className="text-secondary text-sm">Four-role synthesis complete</p>
-                </div>
-                <div className="stat-tile">
-                  <span className="text-xs text-muted">Overall Confidence</span>
-                  <div className="mono-data pipeline-count">{averageConfidence ?? 0}%</div>
-                </div>
-                <div className="stat-tile">
-                  <span className="text-xs text-muted">Matched Projects</span>
-                  <div className="mono-data pipeline-count">{warRoom.matched_projects?.length || 0}</div>
-                </div>
-                {hasFallback ? <span className="badge badge-analyzing">One or more seats used fallback output</span> : <span className="badge badge-done">All seats AI-generated</span>}
-              </div>
-            </div>
-          ) : null}
 
           {warRoom.error_message ? (
             <div className="panel mb-4" style={{ borderColor: 'rgba(255, 107, 107, 0.35)' }}>
