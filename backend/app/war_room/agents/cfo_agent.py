@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from app.war_room.confidence import calculate_agent_confidence
 from app.war_room.cost_calculator import compute_cost_estimate
 from app.war_room.llm_provider import get_war_room_llm_provider
+from app.war_room.specificity_check import warn_if_generic_agent_output
 
 SYSTEM_PROMPT = """
 You are the CFO on an internal proposal war room team. You bring deep
@@ -57,6 +58,10 @@ OUTPUT FIELDS:
 - cost_estimate: as before, including the contingency buffer applied.
 - financial_risks: must reference specific RFP items, not generic
   "scope uncertainty" language.
+  Each financial_risks entry must name the RFP-derived driver behind the
+  risk: a named integration, named compliance framework, or specific scope
+  item from the analysis. Reject broad risk categories unless they point
+  to the exact RFP signal creating the commercial exposure.
 - margin_assessment: include the guardrail check above.
 
 Return JSON matching the schema.
@@ -190,6 +195,8 @@ Return a JSON object matching the schema.
     payload = output.model_dump()
     generated_by = "llm" if structured else "deterministic_fallback"
     payload["generated_by"] = generated_by
+    if structured:
+        warn_if_generic_agent_output("cfo", state, payload)
     payload["confidence"] = calculate_agent_confidence(
         agent="cfo",
         state=state,

@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.war_room.confidence import calculate_agent_confidence
 from app.war_room.llm_provider import get_war_room_llm_provider
+from app.war_room.specificity_check import warn_if_generic_agent_output
 
 SYSTEM_PROMPT = """
 You are the Proposal Writer on an internal proposal war room team. You
@@ -52,6 +53,12 @@ omitting an item.
 
 If human_overrides is present, confirm explicitly how the final narrative
 reflects it.
+
+All narrative fields must stay concrete to this RFP: executive_summary,
+proposed_solution, architecture_section, delivery_approach, cost_section,
+and competitive_positioning must each reference at least one specific
+input fact where natural. Reject generic proposal language that could be
+reused unchanged for a different client or domain.
 
 Return JSON matching the schema.
 """
@@ -112,6 +119,31 @@ def _build_compliance_matrix(analysis: dict[str, Any], proposal_text: str) -> li
     return rows
 
 
+def _format_cost_section(cost_estimate: Any) -> str:
+    if not isinstance(cost_estimate, dict) or not cost_estimate:
+        return "Commercial estimate to be confirmed after discovery."
+
+    currency = str(cost_estimate.get("currency") or "USD")
+    minimum = cost_estimate.get("minimum")
+    recommended = cost_estimate.get("recommended")
+    maximum = cost_estimate.get("maximum")
+    total_hours = cost_estimate.get("total_hours")
+    contingency = cost_estimate.get("contingency_buffer_pct")
+
+    range_text = (
+        f"{currency} {minimum:,} to {maximum:,}, with a recommended budget of {currency} {recommended:,}"
+        if isinstance(minimum, int | float) and isinstance(maximum, int | float) and isinstance(recommended, int | float)
+        else "Budget range to be confirmed"
+    )
+    effort_text = f" based on {total_hours:,} estimated hours" if isinstance(total_hours, int | float) else ""
+    contingency_text = (
+        f" and a {contingency}% contingency buffer"
+        if isinstance(contingency, int | float)
+        else ""
+    )
+    return f"{range_text}{effort_text}{contingency_text}."
+
+
 def _fallback(state: dict[str, Any]) -> ProposalOutput:
     architect = state.get("architect_output") or {}
     cfo = state.get("cfo_output") or {}
@@ -139,7 +171,7 @@ def _fallback(state: dict[str, Any]) -> ProposalOutput:
         delivery_approach=(
             f"Target a {cfo.get('estimated_duration_weeks', 10)} week plan with discovery, build, test, and rollout phases for {session_title}."
         ),
-        cost_section=str(cfo.get("cost_estimate") or {}),
+        cost_section=_format_cost_section(cfo.get("cost_estimate")),
         competitive_positioning=competitor.get("value_proposition")
         or "Differentiate through delivery control and grounded evidence.",
         risks=[
@@ -195,6 +227,8 @@ Return a JSON object matching the schema.
     payload = output.model_dump()
     generated_by = "llm" if structured else "deterministic_fallback"
     payload["generated_by"] = generated_by
+    if structured:
+        warn_if_generic_agent_output("proposal", state, payload)
     payload["confidence"] = calculate_agent_confidence(
         agent="proposal",
         state=state,

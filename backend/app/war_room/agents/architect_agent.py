@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.war_room.confidence import calculate_agent_confidence
 from app.war_room.llm_provider import get_war_room_llm_provider
+from app.war_room.specificity_check import warn_if_generic_agent_output
 
 SYSTEM_PROMPT = """
 You are the Tech Architect on an internal proposal war room team. You
@@ -65,6 +66,10 @@ OUTPUT FIELDS:
 - architecture_pattern: one of "modular monolith" | "microservices" |
   "event-driven" | "hybrid", plus a one-sentence justification.
 - recommended_stack: max 6 items, each tied to a stated requirement.
+  Each recommended_stack item must name an actual specific technology,
+  product, or named service tied to the requirement it addresses. Reject
+  category-level nouns such as "a data analytics platform" unless the item
+  names the concrete product or service, such as "Azure Synapse Analytics".
 - reusable_components: empty list if no retrieved match supports reuse.
 - assumptions: every tier-4 inference goes here, nowhere else.
 
@@ -249,6 +254,8 @@ Return a JSON object matching the schema.
     payload = output.model_dump()
     generated_by = "llm" if structured else "deterministic_fallback"
     payload["generated_by"] = generated_by
+    if structured:
+        warn_if_generic_agent_output("architect", state, payload)
     payload["confidence"] = calculate_agent_confidence(
         agent="architect",
         state=state,
