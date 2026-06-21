@@ -592,15 +592,6 @@ function withArchitectureFallbackDiagram(
 function ArchitectureView({ architecture, analysis }: { architecture?: RFPIntelligence['architecture']; analysis?: RFPAnalysisType }) {
   if (!architecture) return <p className="readable-text">No architecture recommendation was generated.</p>
   const displayArchitecture = withArchitectureFallbackDiagram(architecture, analysis)
-  const hasDetails = Boolean(
-    displayArchitecture.business_view?.length ||
-    displayArchitecture.technical_view?.length ||
-    displayArchitecture.data_flow?.length ||
-    displayArchitecture.integration_flow?.length ||
-    displayArchitecture.security_operations?.length ||
-    displayArchitecture.decision_points?.length ||
-    displayArchitecture.call_prep_questions?.length
-  )
   return (
     <div className="content-stack">
       {displayArchitecture.summary ? <p className="readable-text">{displayArchitecture.summary}</p> : null}
@@ -611,30 +602,6 @@ function ArchitectureView({ architecture, analysis }: { architecture?: RFPIntell
           <pre>{displayArchitecture.structurizr_dsl}</pre>
         </details>
       ) : null}
-      {hasDetails ? (
-        <>
-          <ArchitectureSubsection title="Business View" items={displayArchitecture.business_view} empty="No business architecture view generated." />
-          <ArchitectureSubsection title="Technical Blueprint" items={displayArchitecture.technical_view} empty="No technical blueprint generated." />
-          <div className="prep-two-column">
-            <ArchitectureSubsection title="Data Flow" items={displayArchitecture.data_flow} empty="No data flow generated." />
-            <ArchitectureSubsection title="Integration Flow" items={displayArchitecture.integration_flow} empty="No integration flow generated." />
-          </div>
-          <ArchitectureSubsection title="Security and Operations" items={displayArchitecture.security_operations} empty="No security or operations detail generated." />
-          <div className="prep-two-column">
-            <ArchitectureSubsection title="Decision Points" items={displayArchitecture.decision_points} empty="No design decisions generated." />
-            <ArchitectureSubsection title="Call Prep Questions" items={displayArchitecture.call_prep_questions} empty="No architecture call questions generated." />
-          </div>
-        </>
-      ) : null}
-    </div>
-  )
-}
-
-function ArchitectureSubsection({ title, items, empty }: { title: string; items?: string[]; empty: string }) {
-  return (
-    <div>
-      <h4 style={{ marginBottom: '0.65rem' }}>{title}</h4>
-      <TextList items={items} empty={empty} />
     </div>
   )
 }
