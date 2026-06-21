@@ -92,8 +92,18 @@ class Settings(BaseSettings):
     @classmethod
     def parse_cors_origins(cls, v: str | List[str]) -> List[str]:
         if isinstance(v, str):
-            import json
-            return json.loads(v)
+            v = v.strip()
+            if not v:
+                return []
+            if v.startswith("[") and v.endswith("]"):
+                try:
+                    import json
+                    parsed = json.loads(v)
+                    if isinstance(parsed, list):
+                        return [str(item).strip() for item in parsed]
+                except Exception:
+                    pass
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
         return v
 
     @field_validator("DATABASE_URL", mode="before")
@@ -109,8 +119,18 @@ class Settings(BaseSettings):
     @classmethod
     def parse_extensions(cls, v: str | List[str]) -> List[str]:
         if isinstance(v, str):
-            import json
-            return json.loads(v)
+            v = v.strip()
+            if not v:
+                return []
+            if v.startswith("[") and v.endswith("]"):
+                try:
+                    import json
+                    parsed = json.loads(v)
+                    if isinstance(parsed, list):
+                        return [str(item).strip().lower() for item in parsed]
+                except Exception:
+                    pass
+            return [ext.strip().lower() for ext in v.split(",") if ext.strip()]
         return v
 
     @property

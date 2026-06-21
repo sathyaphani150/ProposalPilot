@@ -15,6 +15,8 @@ def test_local_dev_cors_allows_vite_fallback_ports() -> None:
     assert pattern is not None
     assert re.match(pattern, "http://localhost:5174")
     assert re.match(pattern, "http://127.0.0.1:8124")
+    assert re.match(pattern, "https://proposal-pilot-cognine.netlify.app")
+    assert re.match(pattern, "https://deploy-preview-12--proposal-pilot-cognine.netlify.app")
 
 
 def test_war_room_start_routes_are_registered() -> None:

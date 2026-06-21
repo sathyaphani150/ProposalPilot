@@ -22,9 +22,8 @@ settings = get_settings()
 
 
 def _local_dev_cors_origin_regex() -> str | None:
-    if settings.is_production:
-        return None
-    return r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
+    # Allow localhost / 127.0.0.1 and any Netlify subdomains (including preview deploys)
+    return r"^(https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?|https://.*\.netlify\.app)$"
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────
