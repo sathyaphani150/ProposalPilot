@@ -50,9 +50,9 @@ class Settings(BaseSettings):
 
     # ── LLM ────────────────────────────────────────────────────────────
     LLM_PROVIDER: str = "groq"  # openai | azure | google | groq | ollama
-    LLM_MODEL: str = "llama-3.3-70b-versatile"
-    RFP_ANALYSIS_MODEL: str = "llama-3.3-70b-versatile"
-    ARCHITECTURE_MODEL: str = "llama-3.3-70b-versatile"
+    LLM_MODEL: str = "openai/gpt-oss-120b"
+    RFP_ANALYSIS_MODEL: str = "openai/gpt-oss-120b"
+    ARCHITECTURE_MODEL: str = "openai/gpt-oss-120b"
     OPENAI_API_KEY: str = ""
     AZURE_OPENAI_API_KEY: str = ""
     AZURE_OPENAI_ENDPOINT: str = ""
