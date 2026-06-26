@@ -290,6 +290,22 @@ code, pre {
   box-shadow: var(--shadow-md);
 }
 
+.card p::first-letter,
+.card li::first-letter,
+.card-elevated p::first-letter,
+.card-elevated li::first-letter,
+.panel p::first-letter,
+.panel li::first-letter,
+.proposal-detail p::first-letter,
+.proposal-detail li::first-letter,
+.match-card p::first-letter,
+.match-card li::first-letter,
+.readable-text::first-letter,
+.page-subtitle::first-letter,
+.output-chip::first-letter {
+  text-transform: uppercase;
+}
+
 /* ── Buttons ─────────────────────────────────────────────────────────── */
 .btn {
   display: inline-flex;
@@ -985,6 +1001,7 @@ code, pre {
 }
 
 .output-chip {
+  display: inline-block;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-full);
   background: rgba(255,255,255,0.03);
