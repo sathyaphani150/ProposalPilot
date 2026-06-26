@@ -187,7 +187,7 @@ class LLMService:
                 temperature=temperature,
                 streaming=streaming,
                 timeout=120,
-                max_retries=0,
+                max_retries=3,
             )
 
         if provider == "ollama":
