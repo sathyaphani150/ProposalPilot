@@ -6,6 +6,7 @@ import { ArrowLeft, FileText, RefreshCw } from 'lucide-react'
 
 import { getErrorMessage } from '@/api/client'
 import { proposalApi, rfpApi } from '@/api/endpoints'
+import { capitalizeSentenceStarts } from '@/utils/text'
 
 const SECTION_LABELS: Record<string, string> = {
   executive_summary: 'Executive Summary',
@@ -88,14 +89,14 @@ function ProposalValue({ value }: { value: unknown }) {
           {dictEntries.map((entry) => (
             <div className="proposal-detail" key={entry.label}>
               <span className="proposal-detail-title">{entry.label}</span>
-              <p className="readable-text">{entry.value}</p>
+              <p className="readable-text">{capitalizeSentenceStarts(entry.value)}</p>
             </div>
           ))}
         </div>
       )
     }
   }
-  return <p className="readable-text">{String(value)}</p>
+  return <p className="readable-text">{capitalizeSentenceStarts(String(value))}</p>
 }
 
 export function ProposalEditor() {

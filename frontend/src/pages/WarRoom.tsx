@@ -14,6 +14,7 @@ import { rfpApi, warRoomApi } from '@/api/endpoints'
 import { getErrorMessage } from '@/api/client'
 import { useWarRoom } from '@/hooks/useWarRoom'
 import { agentConfig } from '@/config/agents'
+import { capitalizeSentenceStarts } from '@/utils/text'
 import type { AgentName, AgentStatus, WarRoomAgentOutput, WarRoomSession } from '@/types'
 
 function stripGeneratedBy(value: unknown): unknown {
@@ -176,9 +177,10 @@ function statusBadgeClass(status: AgentStatus) {
 }
 
 function OutputValue({ label, value }: { label: string; value: string }) {
+  const displayValue = capitalizeSentenceStarts(value)
   if (label === 'Confidence') {
     const percent = confidencePercent(Number(value))
-    return percent === null ? <p className="readable-text">{value}</p> : (
+    return percent === null ? <p className="readable-text">{displayValue}</p> : (
       <div className="confidence-meter">
         <div className="confidence-track"><div className="confidence-fill" style={{ width: `${percent}%` }} /></div>
         <span className="mono-data">{percent}%</span>
@@ -186,7 +188,7 @@ function OutputValue({ label, value }: { label: string; value: string }) {
     )
   }
 
-  const lines = value.split('\n').map((line) => line.replace(/^-\s*/, '').trim()).filter(Boolean)
+  const lines = displayValue.split('\n').map((line) => line.replace(/^-\s*/, '').trim()).filter(Boolean)
   if (lines.length > 1 || value.trim().startsWith('- ')) {
     return (
       <div className="chip-list">
@@ -195,7 +197,7 @@ function OutputValue({ label, value }: { label: string; value: string }) {
     )
   }
 
-  return <p className="readable-text">{value}</p>
+  return <p className="readable-text">{displayValue}</p>
 }
 
 type OutputSection = ReturnType<typeof parseOutputSections>[number]
@@ -451,7 +453,7 @@ export function WarRoom() {
                 </div>
                 <div className="agent-preview">
                   <p className="agent-preview__summary">
-                    {summarySection?.value || getWaitingCopy(agent.key, status)}
+                    {capitalizeSentenceStarts(summarySection?.value || getWaitingCopy(agent.key, status))}
                   </p>
                   <div className="agent-preview__confidence">
                     <span className="mono-data">confidence</span>

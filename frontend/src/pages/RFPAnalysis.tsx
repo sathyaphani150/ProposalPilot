@@ -24,6 +24,7 @@ import {
 } from 'lucide-react'
 import { rfpApi } from '@/api/endpoints'
 import { getErrorMessage } from '@/api/client'
+import { capitalizeSentenceStarts } from '@/utils/text'
 import type {
   ArchitectureDiagramNode,
   EvidenceItem,
@@ -68,10 +69,10 @@ function getStatusBadge(status: RFPStatus) {
 }
 
 function cleanDisplayText(value: string) {
-  return value
+  return capitalizeSentenceStarts(value
     .replace(/\.{4,}\s*\d+/g, '')
     .replace(/\s{2,}/g, ' ')
-    .trim()
+    .trim())
 }
 
 function asText(value: unknown): string {
